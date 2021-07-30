@@ -371,7 +371,7 @@ export const roomKeys = async (
             p++;
             const user = recipientsProfiled.find((x) => out.startsWith(x.id));
             return (rm["saltedKeys" + user.id] =
-              user && out.substring(0, out.lastIndexOf(saltedKeys[p]).length));
+              user && out.substring(user.id.length, out.length));
           });
           delete rm.id;
           rm.box = roomBox.box;
