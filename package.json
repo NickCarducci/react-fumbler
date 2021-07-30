@@ -1,6 +1,6 @@
 {
     "name": "react-fumbler",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "description": "react-keybox-firestore, sorting logic for pouchdb local storage key storage for on-device, end-to-end-encryption",
     "main": "src/index.js",
     "keywords": [
@@ -38,6 +38,7 @@
     },
     "dependencies": {
         "@babel/runtime": "^7.12.0",
+        "firebase": "8.7.0",
         "js-crypto-rsa": "^1.0.0",
         "pouchdb": ">=7.1.1",
         "pouchdb-upsert": ">=2.2.0",
