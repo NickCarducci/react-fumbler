@@ -7,7 +7,7 @@ babel config
 LICENSE AGPL-3
 No redistribution but for strategy of parts, unless retributed
 
-how to use, create a public and private user data collection [users,userDatas] or whatever
+how to use, Chats: create a public and private user data collection [users,userDatas] or whatever
     
     import React from "react";
     import rsa from "js-crypto-rsa";
@@ -82,124 +82,218 @@ how to use, create a public and private user data collection [users,userDatas] o
           rsaPrivateKeys,
           rsaKeys: [],
           chats: []
+          keyBoxes,
+          standbyMode
         };
       }
-        const {
-          keyBoxes,
-          rsaPrivateKeys,
-          standbyMode
-        } = this.state;
-
-        handleKeysForRoom = (room) => {
-          const { recipientsProfiled, threadId, user } = this.props;
-          const { rsaPrivateKeys } = this.state;
-          const rooms = firebase.firestore().collection("rooms");
-          roomKeys(room, rsaPrivateKeys, threadId, recipientsProfiled, rooms, user);
-        };
-        componentDidUpdate = prevProps =>{
-          if(this.props.room!==prevProps.room){
-              /*
-              room = {
-                id: collection + doc.id,
-                ["saltedKeys" + userId]: roomKeyInBox,
-                ...,
-                ["saltedKeys" + userId]: roomKeyInBox
-              }
-              */
-              const{room}=this.props
-              const roomKey = room["saltedKey" + this.props.auth.uid]
-              this.setState({roomKey},()=>{
-                let p = 0
-                let chats = []
-                this.props.chats.map(async x=>{
-                  p++
-                  var foo = {...x}
-                  const message = await rsa
-                    .decrypt(x.message, user.key, "SHA-256", {
-                      name: "RSA-PSS"
-                    })
-                  if(message){
-                    foo.message = message
-                    chats.push(foo)
-                  }
-                })
-                if(p===this.props.chats.length){
-                  this.setState({chats})
+      componentDidMount = () =>{ 
+        await this.state.rsaPrivateKeys
+          .readPrivateKeys()
+          .then(async (keysOutput) => {
+            const keyBoxes = Object.values(keysOutput);
+            if (keyBoxes) {
+              const accountBox = keyBoxes.find(
+                (x) => x._id === this.props.auth.uid
+              );
+              this.setState({user:{...this.state.user, key: accountBox.key, box: accountBox}})
+      }
+      handleKeysForRoom = (room) => {
+        const { recipientsProfiled, threadId, user } = this.props;
+        const { rsaPrivateKeys } = this.state;
+        const rooms = firebase.firestore().collection("rooms");
+        roomKeys(room, rsaPrivateKeys, threadId, recipientsProfiled, rooms, user);
+      };
+      componentDidUpdate = prevProps => {
+        if(this.props.room!==prevProps.room){
+            /*
+            room = {
+              id: collection + doc.id,
+              ["saltedKeys" + userId]: roomKeyInBox,
+              ...,
+              ["saltedKeys" + userId]: roomKeyInBox
+            }
+            */
+            const{room}=this.props
+            const roomKey = room["saltedKey" + this.props.auth.uid]
+            this.setState({roomKey},()=>{
+              let p = 0
+              let chats = []
+              this.props.chats.map(async x=>{
+                p++
+                var foo = {...x}
+                const message = await rsa
+                  .decrypt(x.message, user.key, "SHA-256", {
+                    name: "RSA-PSS"
+                  })
+                if(message){
+                  foo.message = message
+                  chats.push(foo)
                 }
               })
-          }
-        }
-        return 
-          <Chatter
-            handleKeysForRoom={()=>{
-              const room = this.props.room ? this.props.room : {id:this.state.threadId}
-              /*
-              room = {
-                id: collection + doc.id,
-                ["saltedKeys" + userId]: roomKeyInBox,
-                ...,
-                ["saltedKeys" + userId]: roomKeyInBox
+              if(p===this.props.chats.length){
+                this.setState({chats})
               }
-              */
-              this.handleKeysForRoom(room)
-            }}
-            standbyMode={standbyMode}
-            allowDeviceToRead={() => {
-              if (user !== undefined && auth !== undefined) {
-                const userDatas = firebase.firestore().collection("userDatas");
-                const users = firebase.firestore().collection("users");
-                const devices = firebase.firestore().collection("devices");
-                fumbler(auth, user, rsaPrivateKeys, userDatas, users, devices)
-                  .then((obj) => {
-                    if (obj) {
-                      if (obj.fumblingComplete) {
-                        this.props.showChats();
-                        this.props.setToUser({
-                          key: obj.accountBox.key,
-                          devices: obj.devices
-                        });
-                      } else if (obj === "awaitingAuthMode")
-                        this.setState(
-                          {
-                            standbyMode: true
-                          },
-                          () =>
-                            window.alert(
-                              "STANDBY: Please login to " +
-                                (user.authorizedDevices.length > 1
-                                  ? "another one of "
-                                  : "") +
-                                `your previous (${
-                                  user.authorizedDevices.length
-                                }) device${
-                                  user.authorizedDevices.length > 1 ? "s" : ""
-                                }, then come back.`
-                            )
-                        );
+            })
+        }
+      }
+      return 
+        <Chatter
+          handleKeysForRoom={()=>{
+            const room = this.props.room ? this.props.room : {id:this.state.threadId}
+            /*
+            room = {
+              id: collection + doc.id,
+              ["saltedKeys" + userId]: roomKeyInBox,
+              ...,
+              ["saltedKeys" + userId]: roomKeyInBox
+            }
+            */
+            this.handleKeysForRoom(room)
+          }}
+          standbyMode={standbyMode}
+          allowDeviceToRead={() => {
+            if (user !== undefined && auth !== undefined) {
+              const userDatas = firebase.firestore().collection("userDatas");
+              const users = firebase.firestore().collection("users");
+              const devices = firebase.firestore().collection("devices");
+              fumbler(auth, user, rsaPrivateKeys, userDatas, users, devices)
+                .then((obj) => {
+                  if (obj) {
+                    if (obj.fumblingComplete) {
+                      this.props.showChats();
+                      this.props.setToUser({
+                        key: obj.accountBox.key,
+                        devices: obj.devices
+                      });
+                    } else if (obj === "awaitingAuthMode")
+                      this.setState(
+                        {
+                          standbyMode: true
+                        },
+                        () =>
+                          window.alert(
+                            "STANDBY: Please login to " +
+                              (user.authorizedDevices.length > 1
+                                ? "another one of "
+                                : "") +
+                              `your previous (${
+                                user.authorizedDevices.length
+                              }) device${
+                                user.authorizedDevices.length > 1 ? "s" : ""
+                              }, then come back.`
+                          )
+                      );
+                  }
+                })
+                .catch(standardCatch);
+            } else window.alert("login you must");
+          }}
+          manuallyDeleteKeyBox={(keybox) => {
+            var keyboxResult = keyBoxes.find((x) => x.box === keybox.box);
+            if (keyboxResult)
+              firebase
+                .firestore()
+                .collection("devices")
+                .doc(keybox.id)
+                .delete()
+                .then(() =>
+                  this.state.rsaPrivateKeys
+                    .deleteKey(keyboxResult)
+                    .then(() => {
+                      console.log("deleted plan from local " + keybox.id);
+                      //this.getNotes();
+                    })
+                    .catch((err) => console.log(err.message))
+                )
+                .catch((err) => console.log(err.message));
+          }}
+
+how to use, Files
+
+    class Files extends React.Component {
+      constructor(props) {
+        super(props);
+        let rsaPrivateKeys = new RSA();
+        this.state = {
+          swipe: "grid",
+          chosenHighlight: "",
+          int: 3,
+          rsaPrivateKeys,
+          videos: []
+        };
+      }
+    componentDidUpdate = async (prevProps) => {
+      if (
+        this.props.auth !== undefined &&
+        this.props.videos !== [] &&
+        this.props.videos !== prevProps.videos
+      ) {
+        await this.state.rsaPrivateKeys
+          .readPrivateKeys()
+          .then(async (keysOutput) => {
+            const keyBoxes = Object.values(keysOutput);
+            if (keyBoxes) {
+              let p = 0;
+              let videos = [];
+              const accountBox = keyBoxes.find(
+                (x) => x._id === this.props.auth.uid
+              );
+              this.props.videos.map(async (x) => {
+                p++;
+                var foo = { ...x };
+                var readFile = new FileReader();
+                await fetch(x.gsUrl, {
+                  "Access-Control-Allow-Origin": "*"
+                })
+                  .then((blob) => blob.blob())
+                  .then((img) => {
+                    if (!/image/.test(img.type)) {
+                      return null; //not an image
                     }
+
+                    readFile.readAsDataURL(img);
+                    /*var reader = new FileReader();
+              reader.readAsArrayBuffer(img);
+              FileReader.readAsDataURL:
+              "returns base64 that contains many characters, 
+              and use more memory than blob url, but removes
+              from memory when you don't use it (by garbage collector)"*/
                   })
-                  .catch(standardCatch);
-              } else window.alert("login you must");
-            }}
-            manuallyDeleteKeyBox={(keybox) => {
-              var keyboxResult = keyBoxes.find((x) => x.box === keybox.box);
-              if (keyboxResult)
-                firebase
-                  .firestore()
-                  .collection("devices")
-                  .doc(keybox.id)
-                  .delete()
-                  .then(() =>
-                    this.state.rsaPrivateKeys
-                      .deleteKey(keyboxResult)
-                      .then(() => {
-                        console.log("deleted plan from local " + keybox.id);
-                        //this.getNotes();
-                      })
-                      .catch((err) => console.log(err.message))
-                  )
-                  .catch((err) => console.log(err.message));
-            }}
+                  .catch((err) =>
+                    this.setState(
+                      {
+                        Errorf: err.message,
+                        Photo: null
+                      },
+                      () => console.log("REACT-LOCAL-PHOTO: " + err.message)
+                    )
+                  );
+
+                //readFile.onerror = (err) => console.log(err.message);
+                readFile.onloadend = (reader) => {
+                  this.setState({ readFile }, async () => {
+                    if (reader.target.readyState === 2) {
+                      const gsUrl = await rsa.decrypt(
+                        reader.target.result,
+                        accountBox.key,
+                        "SHA-256",
+                        {
+                          name: "RSA-PSS"
+                        }
+                      );
+                      if (gsUrl) {
+                        foo.gsUrl = gsUrl;
+                        videos.push(foo);
+                      }
+                    }
+                  });
+                };
+              });
+              if (p === this.props.videos.length) this.setState({ videos });
+            }
+          });
+      }
+    };
 
 SEE LICENSE IN LICENSE.lz.txt
 
