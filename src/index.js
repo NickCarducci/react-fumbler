@@ -1,4 +1,5 @@
-import firebase from ".././init-firebase";
+import firebase from "firebase/app";
+import "firebase/firestore";
 import rsa from "js-crypto-rsa";
 const standardCatch = (err) => console.log(err.message);
 const arrayMessage = (message) =>
