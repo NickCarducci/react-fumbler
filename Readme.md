@@ -8,6 +8,48 @@ LICENSE AGPL-3
 No redistribution but for strategy of parts, unless retributed
 
 how to use, Chats: create a public and private user data collection [users,userDatas] or whatever
+
+    /*
+    userDatas = {
+      pendingDeviceBoxes: firebase.firestore.FieldValue.arrayRemove(
+        accountBox.box
+      ),
+      key: user["deviceBox" + deviceBox.box]: ,
+      ["deviceBox" + deviceBox]: rsa.encrypt(
+        accountBox.key,
+        deviceBox,
+        "SHA-256",
+        {
+          name: "RSA-PSS"
+        }
+      )
+    }
+    keybox = {
+      key: privateKey,
+      box: publicKey
+    }
+    */
+    addUserDatas = (meAuth) => {
+      const users = firebase.firestore().collection("users");
+      users.doc(meAuth.uid).onSnapshot((doc) => {
+        if (doc.exists) {
+          var userDatas = doc.data();
+          user.id = doc.id
+          const userDatas = firebase.firestore().collection("userDatas");
+          userDatas.doc(meAuth.uid).onSnapshot((doc) => {
+            if (doc.exists) {
+              var userDatas = doc.data();
+              this.setState(
+                {
+                  user: { ...user, ...userDatas }
+                },
+                () => this.getEntities(meAuth)
+              );
+            }
+          }, standardCatch);
+        }
+      }, standardCatch);
+    };
     
     import React from "react";
     import rsa from "js-crypto-rsa";
@@ -215,9 +257,6 @@ how to use, Files
         super(props);
         let rsaPrivateKeys = new RSA();
         this.state = {
-          swipe: "grid",
-          chosenHighlight: "",
-          int: 3,
           rsaPrivateKeys,
           videos: []
         };
