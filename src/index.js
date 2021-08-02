@@ -1,5 +1,7 @@
 import firebase from "firebase/app";
 import "firebase/firestore";
+import PouchDB from "pouchdb";
+import upsert from "pouchdb-upsert";
 import rsa from "js-crypto-rsa";
 const standardCatch = (err) => console.log(err.message);
 const arrayMessage = (message) =>
@@ -16,13 +18,13 @@ const specialFormatting = (x, numbersOk) =>
     .split(" ")
     .map((word) => {
       var end = word.substring(1);
-      if (word.includes(`'`)) {
-        var withapos = word.lastIndexOf(`'`);
+      if (word.includes("'")) {
+        var withapos = word.lastIndexOf("'");
         var beginning = word.substring(1, withapos);
         if (beginning.length === 1) {
           end =
             beginning +
-            `'` +
+            "'" +
             word.charAt(withapos + 1).toUpperCase() +
             word.substring(withapos + 2);
         }
@@ -33,47 +35,150 @@ const specialFormatting = (x, numbersOk) =>
         : arrayMessage(resword).join(" ");
     })
     .join(" ");
-const castBox = async (deviceBox, deviceName, auth, userDatas, devices) =>
-  await userDatas
-    .doc(auth.uid)
-    .update({
-      pendingDeviceBoxes: firebase.firestore.FieldValue.arrayUnion(
-        deviceBox.box
-      )
+
+const deletion = async (d, db) => {
+  console.log("deleting");
+  console.log(d);
+  await db.remove(d).catch(standardCatch);
+};
+//const destroy = (db) => db.destroy();
+const set = async (db, c) =>
+  //!c._id
+  //? console.log("pouchdb needs ._id key:value: JSON.parse= " + JSON.parse(c))
+  await db //has upsert plugin from class constructor
+    .upsert(c._id, (copy) => {
+      copy = { ...c }; //pouch-db \(construct, protocol)\
+      return copy; //return a copy, don't displace immutable object fields
     })
     .then(
-      async () =>
-        await devices
-          .add({
-            authorId: auth.uid,
-            box: deviceBox.box,
-            name: deviceName
-          })
-          .then(() => "awaitingAuthMode")
-          .catch(standardCatch)
+      () => console.log("saved successful") /*"success"*/
+      /** or
+              notes.find((x) => x._id === c._id)
+                ? this.db
+                  .post(c)
+                  .then(() => null)
+                  .catch(standardCatch)
+              : deletion(c) && set(db, c);  
+              */
     )
     .catch(standardCatch);
+const read = async (db, notes /*={}*/) =>
+  //let notes = {};
+  await db
+    .allDocs({ include_docs: true })
+    .then(
+      (
+        allNotes //new Promise cannot handle JSON objects, Promise.all() doesn't
+      ) =>
+        Promise.all(
+          allNotes.rows.map(async (n) => await (notes[n.doc.key] = n.doc))
+        )
+      // && and .then() are functionally the same;
+    )
+    .catch(standardCatch);
+
+const optsForPouchDB = {
+  revs_limit: 1, //revision-history
+  auto_compaction: true //zipped...
+};
+export class RSA {
+  //Key-Box device query Asymmetric-Encryption
+  constructor(name) {
+    PouchDB.plugin(upsert);
+    const title = "rsaPrivateKeys";
+    this.db = new PouchDB(title, optsForPouchDB);
+  }
+  deleteKey = async (keybox) => {
+    await deletion(keybox, this.db);
+  };
+
+  //deleteKeys = async () => await destroy(this.db);
+  setPrivateKey = async (key) => await set(this.db, key);
+  readPrivateKeys = async (notes = {}) =>
+    //let notes = {};
+    await read(this.db, notes);
+}
+const castBox = async (
+  deviceBox,
+  deviceName,
+  userDatas,
+  devices,
+  authorId,
+  user,
+  rsaPrivateKeys
+) => {
+  devices
+    .where("authorId", "==", authorId)
+    .get()
+    .then(async (devs) => {
+      if ((devs && devs.docs.length === 0) || !user.key) {
+        rsaPrivateKeys
+          .deleteKey(deviceBox)
+          .then(() => {
+            rsaPrivateKeys.setPrivateKey({
+              _id: authorId,
+              box: deviceBox.box,
+              key: deviceBox.key
+            });
+          })
+          .catch(standardCatch);
+      } else {
+        console.log("casting box");
+        console.log(deviceBox);
+        if (
+          !user.pendingDeviceBoxes ||
+          !user.pendingDeviceBoxes.includes(deviceBox.box)
+        ) {
+          return await userDatas
+            .update({
+              pendingDeviceBoxes: firebase.firestore.FieldValue.arrayUnion(
+                deviceBox.box
+              )
+            })
+            .then(
+              async () =>
+                await devices
+                  .add({
+                    authorId,
+                    box: deviceBox.box,
+                    name: deviceName
+                  })
+                  .then(() => "awaitingAuthMode")
+                  .catch(standardCatch)
+            )
+            .catch(standardCatch);
+        } else return console.log("box is already pending approval");
+      }
+    });
+};
 
 const getKeys = async (
   deviceBox,
   accountBox,
   user,
   rsaPrivateKeys,
-  auth,
-  ud, //userdata doc
+  userDatas, //userdata doc
   devices,
-  userDatas
+  deviceName,
+  authorId
 ) => {
   if (user["deviceBox" + deviceBox.box]) {
     rsaPrivateKeys
       .setPrivateKey({
-        _id: auth.uid,
-        key: user["deviceBox" + deviceBox.box],
+        _id: authorId,
+        key: rsa.decrypt(
+          user["deviceBox" + deviceBox.box],
+          deviceBox.key,
+          "SHA-256",
+          {
+            name: "RSA-PSS"
+          }
+        ),
         box: user.box
       })
       .then(
         async () =>
-          await ud
+          await userDatas
             .update({
               pendingDeviceBoxes: firebase.firestore.FieldValue.arrayRemove(
                 accountBox.box
@@ -84,8 +189,8 @@ const getKeys = async (
             .then(
               async () =>
                 await devices
-                  .where("authorId", "==", auth.uid)
-                  .where("box", "==", deviceBox.box)
+                  .where("authorId", "==", authorId)
+                  .where("box.n", "==", deviceBox.box.n)
                   .get()
                   .then((querySnapshot) => {
                     let foos = [];
@@ -112,186 +217,181 @@ const getKeys = async (
             )
             .catch(standardCatch)
       );
-  } else
+  } /*else
     await castBox(
       deviceBox,
-      window.prompt(`give us a name for this device`),
-      auth,
+      deviceName,
       userDatas,
-      devices
-    ); //this shouldn't run unless interrupted
+      devices,
+      authorId,
+      user,
+      rsaPrivateKeys
+    );*/ //this shouldn't run unless interrupted
 };
-const saveDevice = async (user, auth, rsaPrivateKeys, deviceName, users) =>
+const getDevices = async (user, userDatas, accountBox) =>
+  user.pendingDeviceBoxes &&
+  user.pendingDeviceBoxes.length > 0 &&
+  user.pendingDeviceBoxes.map(
+    async (deviceBox) =>
+      await userDatas
+        .update({
+          pendingDeviceBoxes: firebase.firestore.FieldValue.arrayRemove(
+            accountBox.box
+          ),
+          ["deviceBox" + deviceBox]: rsa.encrypt(
+            accountBox.key,
+            deviceBox,
+            "SHA-256",
+            {
+              name: "RSA-PSS"
+            }
+          )
+        })
+        .then(() => {})
+        .catch(standardCatch)
+  );
+
+const saveDevice = async (
+  user,
+  userProps,
+  rsaPrivateKeys,
+  deviceName,
+  userDatas,
+  devices,
+  authorId
+) =>
   await rsa
     .generateKey(2048)
-    .then(
-      async (accountBox) =>
-        await rsaPrivateKeys
-          .setPrivateKey({
-            _id: user.box ? "device" : auth.uid,
-            key: accountBox.key,
-            box: accountBox.box
-          })
-          .then(async () => {
-            //with device-box, get account-key
-            if (!user.box)
-              //totally new account-box & device-box (same for first device)
-              users
-                .doc(auth.uid)
-                .update({ box: accountBox.box }) //keys are only on device
-                .then(() =>
-                  window.alert(
-                    "Establishing an original keybox for your account... success!  " +
-                      "Now you can copy this to access on-device, end-to-end encrypted chats"
-                  )
+    .then(async (accountBox) => {
+      console.log("fashioned keys");
+      console.log(accountBox);
+      devices
+        .get()
+        .then(async (devs) => {
+          const keybox = {
+            _id: devs.docs.length > 0 ? "device" : authorId,
+            key: accountBox.privateKey,
+            box: accountBox.publicKey
+          };
+          console.log("saving");
+          console.log(keybox);
+          rsaPrivateKeys.setPrivateKey(keybox);
+          //with device-box, get account-key
+          if (!userProps.box) {
+            console.log("totally new account-box");
+            //& device-box (same for first device)
+            user
+              .update({ box: keybox.box }) //keys are only on device
+              .then(() =>
+                console.log(
+                  "Establishing an original keybox for your account... success!  " +
+                    "Now you can copy this to access on-device, end-to-end encrypted chats"
                 )
-                .catch(standardCatch);
-            return await castBox(
-              accountBox,
-              specialFormatting(deviceName),
-              auth,
-              user
-            );
-
-            //randomString(4, "aA#")
-          })
-          .catch(standardCatch)
-    )
-    .catch(standardCatch);
-
-const getDevices = async (user, ud, accountBox, devices) =>
-  await Promise.all(
-    user.pendingDeviceBoxes &&
-      user.pendingDeviceBoxes.length > 0 &&
-      user.pendingDeviceBoxes.map(
-        async (deviceBox) =>
-          await ud
-            .update({
-              pendingDeviceBoxes: firebase.firestore.FieldValue.arrayRemove(
-                accountBox.box
-              ),
-              ["deviceBox" + deviceBox]: rsa.encrypt(
-                accountBox.key,
-                deviceBox,
-                "SHA-256",
-                {
-                  name: "RSA-PSS"
-                }
               )
-            })
-            .then(() => "string only")
-            .catch(standardCatch)
-      )
-  )
-    .then(
-      async () =>
-        //hydrate keys
-        (async (keyBoxes, auth, rsaPrivateKeys) =>
-          await devices
-            .where("authorId", "==", auth.uid)
-            .get()
-            .then((querySnapshot) => {
-              let devices = [];
-              let p = 0;
-              querySnapshot.docs.forEach((doc) => {
-                p++;
-                if (doc.exists) {
-                  var dev = doc.data();
-                  dev.id = doc.id;
-                  dev.thisdevice = keyBoxes.find(
-                    (x) => x._id === "device" && x.box === dev.box
-                  );
-                  if (!dev.decommissioned) {
-                    devices.push(dev);
-                  } else {
-                    var keybox = keyBoxes.find((x) => x.box === dev.box);
-                    if (keybox)
-                      rsaPrivateKeys.deleteKey(keybox).catch(standardCatch);
-                  }
-                }
-              });
-              if (querySnapshot.docs.length === p) {
-                return devices;
-              }
-            })
-            .catch(standardCatch)) && devices
-    )
-    .catch(standardCatch);
-
-export const fumbler = async (
-  auth,
-  user,
-  rsaPrivateKeys,
-  userDatas,
-  users,
-  devices
-) =>
-  await rsaPrivateKeys
-    .readPrivateKeys()
-    .then(async (keysOutput) => {
-      const keyBoxes = Object.values(keysOutput);
-      if (keyBoxes) {
-        const ud = userDatas.doc(auth.uid);
-        const accountBox = keyBoxes.find((x) => x._id === auth.uid);
-        if (accountBox) {
-          //user keyBox found (locally), and useable. Everytime, salt the
-          //account-key stored on device for all pendingDeviceBoxes
-          //syncPending
-          return await getDevices(
-            user,
-            ud,
-            accountBox,
-            devices
-            //keyBoxes,
-            //auth,
-            //rsaPrivateKeys
-          )
-            //async await require stringify? if already then'd,
-            //it is already object
-            .then((devices) => {
-              return {
-                accountBox,
-                fumblingComplete: true,
-                devices
-              };
-            })
-            .catch(standardCatch);
-        } else {
-          const deviceBox = keyBoxes.find((x) => x._id === "device");
-          if (deviceBox) {
-            //no user keyBox found (locally), but device-box has been
-            //provisioned/forged (locally). Next,
-            getKeys(
-              deviceBox,
-              accountBox,
-              user,
-              rsaPrivateKeys,
-              auth,
-              ud,
-              devices
-            );
-            return null;
+              .catch(standardCatch);
+            return await devices
+              .add({
+                authorId,
+                box: keybox.box,
+                name: deviceName
+              })
+              .then(() => "awaitingAuthMode")
+              .catch(standardCatch);
           } else {
-            //no user, nor device keyBox, found
-            const deviceName = window.prompt(`give us a name for this device`);
-            if (deviceName) {
-              saveDevice(
-                user,
-                auth,
-                rsaPrivateKeys,
-                deviceName,
-                users,
-                userDatas
-              );
-            }
-            return null;
+            console.log("adding as an additional device");
+            return await castBox(
+              keybox,
+              specialFormatting(deviceName),
+              userDatas,
+              devices,
+              authorId,
+              user,
+              rsaPrivateKeys
+            );
           }
-          //
-        }
-      } else return null;
+          //randomString(4, "aA#")
+        })
+        .catch(standardCatch);
     })
     .catch(standardCatch);
 
+const fumbler = async (user, userDatas, devices, deviceName, authorId) => {
+  return await user.get().then(async (bar) => {
+    var userProps = bar.data();
+    userProps.id = bar;
+    const rsaPrivateKeys = new RSA();
+    await rsaPrivateKeys
+      .readPrivateKeys()
+      .then(async (keysOutput) => {
+        const keyBoxes = Object.values(keysOutput);
+        if (keyBoxes) {
+          const accountBox = keyBoxes.find((x) => x._id === authorId);
+          if (accountBox) {
+            //user keyBox found (locally), and useable. Everytime, salt the
+            //account-key stored on device for all pendingDeviceBoxes
+            //syncPending
+            console.log("found account box");
+            await getDevices(
+              userProps,
+              userDatas,
+              accountBox,
+              devices,
+              authorId
+            );
+            //async await require stringify? if already then'd,
+            //it is already object
+
+            //hydrate keys
+            const output = {
+              accountBox,
+              fumblingComplete: true
+            };
+            return await new Promise((resolve) =>
+              resolve(JSON.stringify(output))
+            );
+          } else {
+            const deviceBox = keyBoxes.find((x) => x._id === "device");
+            console.log("deviceBox");
+            console.log(keyBoxes[0]);
+            if (deviceBox) {
+              //no user keyBox found (locally), but device-box has been
+              //provisioned/forged (locally). Next,
+              console.log("found device box");
+              getKeys(
+                deviceBox,
+                accountBox,
+                userProps,
+                rsaPrivateKeys,
+                userDatas,
+                devices,
+                deviceName,
+                authorId
+              );
+              return null;
+            } else
+              return saveDevice(
+                user,
+                userProps,
+                rsaPrivateKeys,
+                deviceName,
+                userDatas,
+                devices,
+                authorId
+              );
+          }
+        } /* else saveDevice(
+          user,
+          userProps,
+          rsaPrivateKeys,
+          deviceName,
+          userDatas,
+          devices,
+          authorId
+        );*/
+      })
+      .catch(standardCatch);
+  });
+};
 const updateMyKeys = async (rsaPrivateKeys, room, user) => {
   await rsaPrivateKeys
     .readPrivateKeys()
@@ -299,7 +399,7 @@ const updateMyKeys = async (rsaPrivateKeys, room, user) => {
       const keyBoxes = Object.values(keysOutput);
       var keyBox = keyBoxes.find((x) => x._id === room.id);
       if (keyBox) {
-        const saltedKeys = room["saltedKeys" + this.props.auth.uid];
+        const saltedKeys = room["saltedKeys" + this.props.authorId];
         saltedKeys &&
           rsa
             .decrypt(saltedKeys, user.key, "SHA-256", {
@@ -325,13 +425,8 @@ const updateMyKeys = async (rsaPrivateKeys, room, user) => {
     })
     .catch((err) => console.log(err.message));
 };
-export const roomKeys = async (
-  room,
-  rsaPrivateKeys,
-  recipientsProfiled,
-  rooms,
-  user
-) => {
+const roomKeys = async (room, recipientsProfiled, rooms, user) => {
+  const rsaPrivateKeys = new RSA();
   //same: room, or recipients && entityType + entityId
   if (room.publicRoomKey) {
     updateMyKeys(rsaPrivateKeys, room, user);
@@ -354,13 +449,15 @@ export const roomKeys = async (
                 if (saltedKey) {
                   resolve(saltedKey); //String
                 } else {
-                  const saltedKey =
-                    user.id +
-                    "saltedKeys" +
-                    rsa.encrypt(roomBox.key, user.box, "SHA-256", {
+                  const saltedKey = rsa.encrypt(
+                    roomBox.key,
+                    user.box,
+                    "SHA-256",
+                    {
                       name: "RSA-PSS"
-                    });
-                  saltedKey && resolve(saltedKey);
+                    }
+                  );
+                  saltedKey && resolve(user.id + saltedKey);
                 }
               })
           )
@@ -381,3 +478,30 @@ export const roomKeys = async (
     });
   }
 };
+
+const deleteFumbledKeys = (keybox, devices) => {
+  const rsaPrivateKeys = new RSA();
+
+  rsaPrivateKeys
+    .readPrivateKeys()
+    .then(async (keysOutput) => {
+      const keyBoxes = Object.values(keysOutput);
+      var keyboxResult = keyBoxes.find((x) => x.box === keybox.box);
+      if (keyboxResult)
+        devices
+          .doc(keybox.id)
+          .delete()
+          .then(() =>
+            rsaPrivateKeys
+              .deleteKey(keyboxResult)
+              .then(() => {
+                console.log("deleted plan from local " + keybox.id);
+                //this.getNotes();
+              })
+              .catch(standardCatch)
+          )
+          .catch(standardCatch);
+    })
+    .catch(standardCatch);
+};
+export { fumbler, roomKeys, deleteFumbledKeys };
