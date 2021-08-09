@@ -2,6 +2,8 @@ Just put what is in path(__dirname, src, index.js) in for now, as I figure out
 babel config
 # Fumbler, your RSA encryption suite for firebase-firestore (in React)!
 
+The reliability of this relies on cors so that no private key-modulo, off-local-storage is required.
+
 ### find your account key thru device-to-device RSA boxes
 
 LICENSE AGPL-3
@@ -53,35 +55,71 @@ how to use, Chats: create a public and private user data collection [users,userD
     
     import React from "react";
     import rsa from "js-crypto-rsa";
+    
+    const standardCatch = (err) => console.log(err.message);
+    const arrayMessage = (message) =>
+      message
+        .toLowerCase()
+        //capture or, excluding set, match 2 or more of the preceding token
+        .replace(/((\r\n|\r|\n)+[^a-zA-Z]+_+[ ]{2,})+/g, " ")
+        .split(" ");
+    const specialFormatting = (x, numbersOk) =>
+      x
+        .toLowerCase()
+        //replace or regex a-z or A-Z includes space whitespace
+        .replace(!numbersOk ? /[^a-zA-Z,']+/g : /[^a-zA-Z0-9,']+/g, " ")
+        .split(" ")
+        .map((word) => {
+          var end = word.substring(1);
+          if (word.includes("'")) {
+            var withapos = word.lastIndexOf("'");
+            var beginning = word.substring(1, withapos);
+            if (beginning.length === 1) {
+              end =
+                beginning +
+                "'" +
+                word.charAt(withapos + 1).toUpperCase() +
+                word.substring(withapos + 2);
+            }
+          }
+          var resword = word.charAt(0).toUpperCase() + end;
+          return ["Of", "And", "The"].includes(resword)
+            ? resword.toLowerCase()
+            : arrayMessage(resword).join(" ");
+        })
+        .join(" ");
 
-    const deletion = (d, db) => db.remove(d).catch(standardCatch);
-    const destroy = (db) => db.destroy();
-    const set = (db, c) =>
-      !c._id
-        ? window.alert(
-            "pouchdb needs ._id key:value: JSON.parse= " + JSON.parse(c)
-          ) &&
-          db
-            .destroy()
-            .then(() => null)
-            .catch(standardCatch)
-        : db //has upsert plugin from class constructor
-            .upsert(c._id, (copy) => {
-              copy = { ...c }; //pouch-db \(construct, protocol)\
-              return copy; //return a copy, don't displace immutable object fields
-            })
-            .then(
-              () => null /*"success"*/
-              /** or
-              notes.find((x) => x._id === c._id)
-                ? this.db
-                  .post(c)
-                  .then(() => null)
-                  .catch(standardCatch)
-              : deletion(c) && set(db, c);  
-              */
-            )
-            .catch(standardCatch);
+    const deletion = async (_id, db) => {
+      console.log("deleting");
+      console.log(_id);
+      await db
+        .remove(_id)
+        .then(() => {
+          db.destroy().then(() => console.log("destoyed"));
+        })
+        .catch(standardCatch);
+    };
+    //const destroy = (db) => db.destroy();
+    const set = async (db, c) =>
+      //!c._id
+      //? console.log("pouchdb needs ._id key:value: JSON.parse= " + JSON.parse(c))
+      await db //has upsert plugin from class constructor
+        .upsert(c._id, (c) => {
+          var copy = { ...c }; //pouch-db \(construct, protocol)\
+          return copy; //return a copy, don't displace immutable object fields
+        })
+        .then(
+          () => console.log("saved successful") /*"success"*/
+          /** or
+                  notes.find((x) => x._id === c._id)
+                    ? this.db
+                      .post(c)
+                      .then(() => null)
+                      .catch(standardCatch)
+                  : deletion(c) && set(db, c);  
+                  */
+        )
+        .catch(standardCatch);
     const read = async (db, notes /*={}*/) =>
       //let notes = {};
       await db
@@ -98,30 +136,30 @@ how to use, Chats: create a public and private user data collection [users,userD
         .catch(standardCatch);
 
     const optsForPouchDB = {
-      revs_limit: 1, //revision-history
-      auto_compaction: true //zipped...
+      //auto_compaction: true //zipped...
     };
-    class RSA {
-      //Key-Box device query Asymmetric-Encryption
+    class DDB {
       constructor(name) {
         PouchDB.plugin(upsert);
-        const title = "rsaPrivateKeys";
+        const title = "deviceName";
         this.db = new PouchDB(title, optsForPouchDB);
       }
-      deleteKey = (keybox) => deletion(keybox, this.db);
+      deleteDeviceName = async (note) =>
+        await this.db.remove(note).catch(standardCatch);
 
-      //deleteKeys = async () => await destroy(this.db);
-      setPrivateKey = (key) => set(this.db, key);
-      readPrivateKeys = async (notes = {}) =>
+      destroy = () => destroy(this.db);
+      storeDeviceName = (key) => set(this.db, key);
+      readDeviceName = async (notes = {}) =>
         //let notes = {};
         await read(this.db, notes);
     }
-    class App extends React.Component {
+
+    class Chats extends React.Component {
       constructor(props) {
         super(props);
-        let rsaPrivateKeys = new RSA();
+        let ddb = new DDB();
         this.state = {
-          rsaPrivateKeys,
+          ddb,
           rsaKeys: [],
           chats: []
           keyBoxes,
@@ -178,7 +216,64 @@ how to use, Chats: create a public and private user data collection [users,userD
             })
         }
       }
-      return 
+      allowDeviceToRead = async () => {
+        const { auth } = this.props;
+        if (auth !== undefined) {
+          const userDatas = firebase
+            .firestore()
+            .collection("userDatas")
+            .doc(auth.uid);
+          const userUpdatable = firebase
+            .firestore()
+            .collection("users")
+            .doc(auth.uid);
+          const devices = firebase.firestore().collection("devices");
+          console.log("FUMBLER");
+
+          if (!this.state.deviceName)
+            return window.alert(`please choose a device name`);
+          const authorId = auth.uid;
+          await fumbler(
+            userUpdatable,
+            userDatas,
+            devices,
+            this.state.deviceName,
+            authorId
+          )
+            .then((o) => {
+              const obj = o && JSON.parse(o);
+              if (obj) {
+                if (obj.fumblingComplete) {
+                  this.props.setToUser({
+                    key: obj.accountBox.key,
+                    devices: obj.devices
+                  });
+                }
+              } else if (obj === "awaitingAuthMode")
+                this.setState(
+                  {
+                    standbyMode: true
+                  },
+                  () =>
+                    window.alert(
+                      "STANDBY: Please login to " +
+                        (user.authorizedDevices.length > 1
+                          ? "another one of "
+                          : "") +
+                        `your previous (${user.authorizedDevices.length}) device${
+                          user.authorizedDevices.length > 1 ? "s" : ""
+                        }, then come back.`
+                    )
+                );
+            })
+            .catch(standardCatch);
+        } else window.alert("login you must");
+      };
+      manuallyDeleteKeyBox = async (keybox) => {
+        const devices = firebase.firestore().collection("devices");
+        deleteFumbledKeys(keybox, devices);
+      };
+      return <div>
         <Chatter
           handleKeysForRoom={()=>{
             const room = this.props.room ? this.props.room : {id:this.state.threadId}
@@ -193,62 +288,33 @@ how to use, Chats: create a public and private user data collection [users,userD
             this.handleKeysForRoom(room)
           }}
           standbyMode={standbyMode}
-          allowDeviceToRead={() => {
-            if (user !== undefined && auth !== undefined) {
-              const userDatas = firebase.firestore().collection("userDatas");
-              const users = firebase.firestore().collection("users");
-              const devices = firebase.firestore().collection("devices");
-              fumbler(auth, user, rsaPrivateKeys, userDatas, users, devices)
-                .then((obj) => {
-                  if (obj) {
-                    if (obj.fumblingComplete) {
-                      this.props.showChats();
-                      this.props.setToUser({
-                        key: obj.accountBox.key,
-                        devices: obj.devices
-                      });
-                    } else if (obj === "awaitingAuthMode")
-                      this.setState(
-                        {
-                          standbyMode: true
-                        },
-                        () =>
-                          window.alert(
-                            "STANDBY: Please login to " +
-                              (user.authorizedDevices.length > 1
-                                ? "another one of "
-                                : "") +
-                              `your previous (${
-                                user.authorizedDevices.length
-                              }) device${
-                                user.authorizedDevices.length > 1 ? "s" : ""
-                              }, then come back.`
-                          )
-                      );
-                  }
-                })
-                .catch(standardCatch);
-            } else window.alert("login you must");
-          }}
-          manuallyDeleteKeyBox={(keybox) => {
-            var keyboxResult = keyBoxes.find((x) => x.box === keybox.box);
-            if (keyboxResult)
-              firebase
-                .firestore()
-                .collection("devices")
-                .doc(keybox.id)
-                .delete()
-                .then(() =>
-                  this.state.rsaPrivateKeys
-                    .deleteKey(keyboxResult)
-                    .then(() => {
-                      console.log("deleted plan from local " + keybox.id);
-                      //this.getNotes();
-                    })
-                    .catch((err) => console.log(err.message))
-                )
-                .catch((err) => console.log(err.message));
-          }}
+          allowDeviceToRead={this.allowDeviceToRead}
+          manuallyDeleteKeyBox={this.manuallyDeleteKeyBox}
+        />
+
+         
+        <Vintages
+          show={
+            (!this.stream && openFolder && this.state.openFrom === "Folder") ||
+            this.stream
+          }
+          auth={this.props.auth}
+          setNapkin={this.props.setNapkin}
+          user={this.props.user}
+          vintageOfKeys={this.props.vintageOfKeys}
+          deviceCollection={firebase.firestore().collection("devices")}
+          userUpdatable={
+            this.props.auth !== undefined &&
+            firebase.firestore().collection("users").doc(this.props.auth.uid)
+          }
+          userDatas={
+            this.props.auth !== undefined &&
+            firebase
+              .firestore()
+              .collection("userDatas")
+              .doc(this.props.auth.uid)
+          }
+        />
 
 how to use, Files
 
