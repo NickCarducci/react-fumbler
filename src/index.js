@@ -3,6 +3,7 @@ import "firebase/firestore";
 import PouchDB from "pouchdb";
 import upsert from "pouchdb-upsert";
 import rsa from "js-crypto-rsa";
+
 const standardCatch = (err) => console.log(err.message);
 const arrayMessage = (message) =>
   message
@@ -598,4 +599,565 @@ const deleteFumbledKeys = (keybox, devices) => {
     })
     .catch(standardCatch);
 };
-export { fumbler, roomKeys, deleteFumbledKeys, RSA };
+
+const optsForPouchDB = {
+  revs_limit: 1, //revision-history
+  auto_compaction: true //zipped...
+};
+//const deletion = (d, db) => db.remove(d).catch(standardCatch);
+const destroy = (db) => db.destroy();
+const set = async (db, c) =>
+  await db //has upsert plugin from class constructor
+    .upsert(c._id, (copy) => {
+      copy = { ...c }; //pouch-db \(construct, protocol)\
+      return copy; //return a copy, don't displace immutable object fields
+    })
+    .then(
+      () => null /*"success"*/
+      /** or
+          notes.find((x) => x._id === c._id)
+            ? this.db
+              .post(c)
+              .then(() => null)
+              .catch(standardCatch)
+          : deletion(c) && set(db, c);  
+          */
+    )
+    .catch(standardCatch);
+const read = async (db, notes /*={}*/) =>
+  //let notes = {};
+  await db
+    .allDocs({ include_docs: true })
+    .then(
+      (
+        allNotes //new Promise cannot handle JSON objects, Promise.all() doesn't
+      ) =>
+        Promise.all(
+          allNotes.rows.map(async (n) => await (notes[n.doc.key] = n.doc))
+        )
+      // && and .then() are functionally the same;
+    )
+    .catch(standardCatch);
+class DDB {
+  constructor(name) {
+    PouchDB.plugin(upsert);
+    const title = "deviceName";
+    this.db = new PouchDB(title, optsForPouchDB);
+  }
+  deleteDeviceName = async (note) =>
+    await this.db.remove(note).catch(standardCatch);
+
+  destroy = () => destroy(this.db);
+  storeDeviceName = async (key) => await set(this.db, key);
+  readDeviceName = async (notes = {}) =>
+    //let notes = {};
+    await read(this.db, notes);
+}
+class Vintages extends React.Component {
+  constructor(props) {
+    super(props);
+    let ddb = new DDB();
+    this.state = { ddb, keyBoxes: [], devices: [] };
+  }
+  devName = () =>
+    this.state.ddb.readDeviceName().then((prenotes) => {
+      const deviceName = Object.values(prenotes)[0];
+      if (deviceName) {
+        this.setState({ deviceName: deviceName._id });
+      }
+    });
+  componentDidMount = () => {
+    this.devName();
+  };
+  getKeys = async (vintage) => {
+    const rsaPrivateKeys = new RSA();
+    rsaPrivateKeys.readPrivateKeys().then(async (keysOutput) => {
+      const keyBoxes = Object.values(keysOutput);
+      if (keyBoxes)
+        this.setState(
+          { keyBoxes },
+          () =>
+            this.props.auth !== undefined &&
+            firebase
+              .firestore()
+              .collection("devices")
+              .where("authorId", "==", this.props.auth.uid)
+              .get()
+              .then(async (querySnapshot) => {
+                let devices = [];
+                let p = 0;
+                const deviceBox = keyBoxes.find(
+                  (x) => x._id === "device" && vintage === x.vintage
+                );
+                const accountBox = keyBoxes.find(
+                  (x) => x._id === this.props.auth.uid && vintage === x.vintage
+                );
+                querySnapshot.docs.forEach((doc) => {
+                  p++;
+                  if (doc.exists) {
+                    var dev = doc.data();
+                    dev.id = doc.id;
+                    //thisacc = user.pendingDeviceBoxes.find(x=>x.n===dev.box.n)
+                    if (deviceBox) dev.deviceBox = deviceBox;
+                    if (accountBox) dev.accountBox = accountBox;
+                    if (dev.decommissioned) {
+                      var keybox = keyBoxes.find((x) => x.box.n === dev.box.n);
+                      if (keybox)
+                        rsaPrivateKeys.deleteKey(keybox).catch(standardCatch);
+                    } else devices.push(dev);
+                  }
+                });
+                if (querySnapshot.docs.length === p) {
+                  //console.log(devices);
+                  this.setState({ devices });
+                }
+              }, standardCatch)
+        );
+    });
+  };
+  componentDidUpdate = (prevProps) => {
+    const { vintageOfKeys, user } = this.props;
+    /*if (this.props !== prevProps && this.state !== this.state.lastState) {
+      this.setState({ lastState: this.state }, () => this.devName());
+    }*/
+    if (vintageOfKeys !== this.props.lastVintageName) {
+      this.getKeys(vintageOfKeys);
+    }
+    if (user !== prevProps.user) {
+      if (!vintageOfKeys) {
+        if (user.defaultVintage) {
+          this.props.setParentState({//setParentState={x=>this.setState(x)}
+            vintageOfKeys: user.defaultVintage
+          });
+        } else
+          user.vintages &&
+            this.props.setParentState({
+              vintageOfKeys: user.vintages[0]
+            });
+      }
+    }
+  };
+  allowDeviceToRead = async () => {
+    const { auth, vintageOfKeys, user } = this.props;
+    if (auth !== undefined) {
+      const userDatas = firebase
+        .firestore()
+        .collection("userDatas")
+        .doc(auth.uid);
+      const userUpdatable = firebase
+        .firestore()
+        .collection("users")
+        .doc(auth.uid);
+      const devices = firebase.firestore().collection("devices");
+      console.log("FUMBLER");
+
+      if (!this.state.deviceName)
+        return window.alert(`please choose a device name`);
+      if (!vintageOfKeys) return window.alert(`please choose a vintage name`);
+      const authorId = auth.uid;
+      await fumbler(
+        userUpdatable,
+        userDatas,
+        devices,
+        this.state.deviceName,
+        authorId,
+        vintageOfKeys
+      )
+        .then((o) => {
+          this.getKeys(vintageOfKeys);
+          const obj = o && JSON.parse(o);
+          if (obj) {
+            if (obj.fumblingComplete) {
+              this.props.setKey({
+                key: obj.accountBox.key,
+                box: obj.accountBox.box,
+                devices: obj.devices
+              });
+            }
+          } else if (obj === "awaitingAuthMode")
+            this.setState(
+              {
+                standbyMode: true
+              },
+              () =>
+                window.alert(
+                  "STANDBY: Please login to " +
+                    (user.authorizedDevices.length > 1
+                      ? "another one of "
+                      : "") +
+                    `your previous (${user.authorizedDevices.length}) device${
+                      user.authorizedDevices.length > 1 ? "s" : ""
+                    }, then come back.`
+                )
+            );
+        })
+        .catch(standardCatch);
+    } else window.alert("login you must");
+  };
+  manuallyDeleteKeyBox = async (keybox) => {
+    const devices = firebase.firestore().collection("devices");
+    deleteFumbledKeys(keybox, devices);
+  };
+  render() {
+    const { vintageOfKeys, user } = this.props;
+    const { keyBoxes, devices } = this.state;
+    const keyboxContStyle = {
+      borderBottom: "2px solid grey",
+      backgroundColor: "rgb(40,40,90)",
+      width: "calc(100% - 30px)",
+      color: "red",
+      padding: "10px",
+      paddingTop: "6px",
+      display: "flex",
+      alignItems: "center"
+    };
+    return (
+      <div
+        style={{
+          display: this.props.show ? "block" : "none",
+          color: "white",
+          boxShadow: "0px 0px 10px 2px blue",
+          borderRadius: "2px",
+          border: "2px rgb(200,200,200) solid",
+          backgroundColor: "rgb(100,170,210)",
+          margin: "6px",
+          padding: "4px"
+        }}
+      >
+        <div
+          style={{
+            backgroundColor: "rgb(10,17,100)",
+            fontSize: "10px",
+            display: "inline-block",
+            lineHeight: "11px",
+            padding: "2px"
+          }}
+        >
+          On-device keybox
+          <br />
+          nationalsecuritycasino.com
+          <br />
+          login.gov convict-intranet
+        </div>
+        <br />
+        current: {"{"}
+        {this.state.deviceName ? (
+          <div
+            onClick={() => {
+              const answer = window.confirm("edit name?");
+              if (answer) this.setState({ deviceName: null });
+            }}
+          >
+            device: {this.state.deviceName}
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              this.state.ddb.storeDeviceName({
+                _id: this.state.deviceNameSetter
+              });
+
+              !user.key && this.allowDeviceToRead();
+            }}
+          >
+            <input
+              className="input"
+              placeholder="device name"
+              onChange={(e) =>
+                this.setState({ deviceNameSetter: e.target.value })
+              }
+            />
+          </form>
+        )}
+        {
+          //vintage name year for content encrypted
+          !vintageOfKeys ? (
+            <form
+              style={{ display: "flex" }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (
+                  !user.vintages ||
+                  !user.vintages.includes(this.state.vintageYearSetter)
+                ) {
+                  this.props.setParentState({
+                    vintageOfKeys: this.state.vintageYearSetter
+                  });
+                } else this.setState({ errVintage: "already" });
+              }}
+            >
+              <input
+                className="input"
+                placeholder="vintage name"
+                onChange={(e) =>
+                  this.setState({
+                    vintageYearSetter: e.target.value.toLowerCase()
+                  })
+                }
+              />
+              {this.state.errVintage}
+              {user !== undefined && user.vintages && user.vintages.length > 0 && (
+                <button
+                  onClick={() =>
+                    this.props.setParentState({
+                      vintageOfKeys: user.vintages[0]
+                    })
+                  }
+                >
+                  &times;
+                </button>
+              )}
+            </form>
+          ) : (
+            <div>
+              <div
+                onClick={() => {
+                  const answer = window.confirm("add vintage?");
+                  if (answer) this.props.setParentState({ vintageOfKeys: null });
+                }}
+              >
+                vintage: {vintageOfKeys}
+              </div>
+              {user.vintages && (
+                <select
+                  onChange={(e) =>
+                    this.props.setParentState({ vintageOfKeys: e.target.value })
+                  }
+                >
+                  {user.vintages.map((x) => {
+                    return <option key={x}>{x}</option>;
+                  })}
+                </select>
+              )}
+            </div>
+          )
+        }
+        {"}"}
+        <br />
+        {
+          //load
+          !this.state.deviceName && vintageOfKeys ? (
+            "loading"
+          ) : !this.state.deviceName ? (
+            "name your first device"
+          ) : user === undefined || !vintageOfKeys ? (
+            ""
+          ) : user.key ? (
+            this.state.showKey ? (
+              <span onClick={() => this.setState({ showKey: false })}>
+                {user.key}
+              </span>
+            ) : (
+              <button onClick={() => this.setState({ showKey: true })}>
+                Show Key
+              </button>
+            )
+          ) : (
+            <button onClick={this.allowDeviceToRead}>
+              {user.box ? "load key" : "modulo keybox"}
+            </button>
+          )
+        }
+        {keyBoxes.length > 0 && (
+          <div style={keyboxContStyle}>
+            <div>{keyBoxes.length} keyboxes</div>
+            {user === undefined
+              ? "your list of keyboxes once you login goes here."
+              : keyBoxes.map((x) => {
+                  const thisdevice = devices.find((p) => p.id === x.id);
+                  //if (!thisdevice) {
+                  return (
+                    <div
+                      key={x._id}
+                      style={{
+                        alignItems: "center",
+                        padding: "4px 10px",
+                        display: "flex",
+                        borderRadius: "12px",
+                        width: "max-content",
+                        backgroundColor: !thisdevice
+                          ? ""
+                          : thisdevice.authorized
+                          ? "white"
+                          : thisdevice.decommissioned
+                          ? "red"
+                          : "yellow"
+                      }}
+                    >
+                      {thisdevice && thisdevice.name}
+                      {thisdevice && thisdevice.thisdevice && " (this)"}
+                      &nbsp;/&nbsp;
+                      {x._id}({x.vintage})
+                    </div>
+                  );
+                  //}
+                })}
+          </div>
+        )}
+        {keyBoxes.length > 0 && (
+          <div style={keyboxContStyle}>
+            <div>{devices.length} devices</div>
+            {user === undefined
+              ? "your list of active devices once you login goes here."
+              : devices.map((x, i) => {
+                  const thisdevice = keyBoxes.find((p) => p.id === x.id);
+                  if (!thisdevice) {
+                    return (
+                      <div
+                        key={"device" + i}
+                        style={{
+                          alignItems: "center",
+                          padding: "4px 10px",
+                          display: "flex",
+                          borderRadius: "12px",
+                          width: "max-content",
+                          backgroundColor: x.authorized
+                            ? "white"
+                            : x.decommissioned
+                            ? "red"
+                            : "yellow"
+                        }}
+                      >
+                        {x.name}
+                        {x.thisdevice && " (this)"}
+                        &nbsp;/&nbsp;
+                        {x._id}({x.vintage})
+                      </div>
+                    );
+                  } else {
+                    const thispendbox = user.pendingDeviceBoxes.find(
+                      (p) => p.n === x.box.n
+                    );
+                    return (
+                      <div
+                        key={"device" + i}
+                        style={{
+                          alignItems: "center",
+                          padding: "4px 10px",
+                          display: "flex",
+                          borderRadius: "12px",
+                          width: "max-content",
+                          backgroundColor: thisdevice.authorized
+                            ? "white"
+                            : thisdevice.decommissioned
+                            ? "red"
+                            : "yellow"
+                        }}
+                      >
+                        {thisdevice.name}
+                        {thisdevice.thisdevice && " (this)"}
+                        {thisdevice.authorized ? (
+                          <div
+                            style={{
+                              fontSize: "10px",
+                              margin: "0px 3px",
+                              border: "1px solid black",
+                              padding: "4px 10px",
+                              display: "flex",
+                              borderRadius: "12px",
+                              width: "max-content",
+                              backgroundColor: "white"
+                            }}
+                            onClick={() => {
+                              var answer = null;
+                              if (!thisdevice.thisdevice) {
+                                answer = window.confirm(
+                                  `Are you sure you want to recind access to e2e-encrypted ` +
+                                    `messages and files-shared? The next time this device signs in, ` +
+                                    `they will have to request the account key again.`
+                                );
+                                if (answer) {
+                                  firebase
+                                    .firestore()
+                                    .collection("devices")
+                                    .doc(thisdevice.id)
+                                    .update({ decommissioned: true })
+                                    .then(() => {})
+                                    .catch(standardCatch);
+                                }
+                              } else {
+                                var devicesInCommission = user.devices.filter(
+                                  (x) => !x.decommissioned
+                                );
+                                if (devicesInCommission.length === 1) {
+                                  answer = window.confirm(
+                                    `this is your last device, if you do not copy your key ` +
+                                      `no one will be able to practically uncover your boxes`
+                                  );
+                                } else {
+                                  answer = window.confirm(
+                                    `Are you sure you want to relinquish this device's access to e2e-encrypted ` +
+                                      `messages and files-shared? You will have to request the account key again.`
+                                  );
+                                }
+                                if (answer) {
+                                  this.props.manualDeleteKeyBox(x);
+                                }
+                              }
+                            }}
+                          >
+                            remove
+                          </div>
+                        ) : (
+                          <div
+                            style={{
+                              fontSize: "10px",
+                              margin: "0px 3px",
+                              border: "1px solid black",
+                              padding: "4px 10px",
+                              display: "flex",
+                              borderRadius: "12px",
+                              width: "max-content",
+                              backgroundColor: "white"
+                            }}
+                            onClick={() => {
+                              var answer = window.confirm(
+                                `Are you sure you want to ${
+                                  thisdevice.decommissioned ? "re" : ""
+                                }authorize device: ` + thisdevice.name
+                              );
+                              if (answer) {
+                                firebase
+                                  .firestore()
+                                  .collection("devices")
+                                  .doc(thisdevice.id)
+                                  .update({
+                                    decommissioned: false,
+                                    authorized: true
+                                  })
+                                  .then(() => {})
+                                  .catch(standardCatch);
+                              }
+                            }}
+                          >
+                            {thisdevice.decommissioned
+                              ? "recover"
+                              : "authorize"}
+                            {/*x.decommissioned && (
+                          <img
+                            onClick={() => {
+                              var answer = window.confirm(
+                                "hide outstanding key"
+                              );
+                            }}
+                            src={settings33}
+                            style={{ width: "20px", height: "20px" }}
+                            alt="error"
+                          />
+                          )*/}
+                          </div>
+                        )}
+                        {thispendbox && <div className="loader" />}({x.vintage})
+                      </div>
+                    );
+                  }
+                })}
+          </div>
+        )}
+      </div>
+    );
+  }
+}
+
+export { fumbler, roomKeys, deleteFumbledKeys, RSA,Vintages };
