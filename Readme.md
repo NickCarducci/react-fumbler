@@ -1,5 +1,6 @@
 Just put what is in path(__dirname, src, index.js) in for now, as I figure out
-babel config (edit: `npm publish`ed without any scripts, just `main:"src/index.js"`
+babel config (edit: `npm publish`ed without any scripts, just `main:"src/index.js"`)
+🚨alpha-
 # Fumbler, your RSA encryption suite for firebase-firestore (in React)!
 
 The reliability of this relies on cors so that no private key-modulo, off-local-storage is required.
@@ -8,6 +9,34 @@ The reliability of this relies on cors so that no private key-modulo, off-local-
 
 LICENSE AGPL-3
 No redistribution but for strategy of parts, unless retributed
+
+how to use
+
+    <div
+      style={{
+        textIndent: "10px",
+        padding: "10px 0px",
+        color: "white",
+        backgroundColor: "rgb(20,20,50)",
+        width: "calc(100%)",
+        //border: "2px solid",
+        breakInside: "avoid"
+      }}
+    >
+      {this.props.auth === undefined ? (
+        "Login to forge vintages"
+      ) : (
+        <Vintages
+          Vintages={this.props.Vintages}
+          show={true}
+          auth={this.props.auth}
+          user={this.props.user}
+          deviceCollection={"devices"}
+          usersPublicable={"users"}
+          usersPrivate={"userDatas"}
+        />
+      )}
+    </div>
 
 how to use, Chats: create a public and private user data collection [users,userDatas] or whatever
 
