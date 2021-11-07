@@ -4,7 +4,7 @@ babel config (edit: `npm publish`ed without any scripts, just `main:"src/index.j
 # Fumbler, your RSA encryption suite for firebase-firestore (in React)!
 
 The reliability of this relies on cors so that no private key-modulo, off-local-storage is required.
-firebase security rules only passes with `request.auth.uid !== null`
+firebase security rules only passes with `request.auth.uid !== null` for me
 
 ### find your account key thru device-to-device RSA boxes
 
