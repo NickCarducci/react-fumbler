@@ -1,9 +1,45 @@
-import firebase from "firebase/app";
-import "firebase/firestore";
+import React from "react";
 import PouchDB from "pouchdb";
 import upsert from "pouchdb-upsert";
+import firebase from "firebase/app";
+import "firebase/firestore";
 import rsa from "js-crypto-rsa";
 
+class RSA {
+  //Key-Box device query Asymmetric-Encryption
+  constructor(name) {
+    PouchDB.plugin(upsert);
+    const title = "rsaPrivateKeys";
+    this.db = new PouchDB(title, {});
+  }
+  deleteKey = async (objectWith_id) =>
+    await this.db
+      .remove(objectWith_id)
+      .then(() => console.log("cleared errored key"))
+      .then(() => {
+        this.db.destroy().then(() => console.log("destoyed"));
+      })
+      .catch(standardCatch);
+  //deleteKeys = async () => await destroy(this.db);
+  setPrivateKey = async (c) =>
+    await this.db //has upsert plugin from class constructor
+      .upsert(c._id, (c) => {
+        var copy = { ...c }; //pouch-db \(construct, protocol)\
+        return copy; //return a copy, don't displace immutable object fields
+      });
+  readPrivateKeys = async (notes = {}) =>
+    //let notes = {};
+    await this.db
+      .allDocs({ include_docs: true })
+      .then(
+        (allNotes) => {
+          allNotes.rows.map((n) => (notes[n.doc.key] = n.doc));
+          return notes;
+        }
+        // && and .then() are functionally the same;
+      )
+      .catch(standardCatch);
+}
 const standardCatch = (err) => console.log(err.message);
 const arrayMessage = (message) =>
   message
@@ -37,560 +73,23 @@ const specialFormatting = (x, numbersOk) =>
     })
     .join(" ");
 
-const deletion = async (_id, db) => {
-  console.log("deleting");
-  console.log(_id);
-  await db
-    .remove(_id)
-    .then(() => {
-      db.destroy().then(() => console.log("destoyed"));
-    })
-    .catch(standardCatch);
-};
-//const destroy = (db) => db.destroy();
-const set = async (db, c) =>
-  //!c._id
-  //? console.log("pouchdb needs ._id key:value: JSON.parse= " + JSON.parse(c))
-  await db //has upsert plugin from class constructor
-    .upsert(c._id, (c) => {
-      var copy = { ...c }; //pouch-db \(construct, protocol)\
-      return copy; //return a copy, don't displace immutable object fields
-    })
-    .then(
-      () => console.log("saved successful") /*"success"*/
-      /** or
-              notes.find((x) => x._id === c._id)
-                ? this.db
-                  .post(c)
-                  .then(() => null)
-                  .catch(standardCatch)
-              : deletion(c) && set(db, c);  
-              */
-    )
-    .catch(standardCatch);
-const read = async (db, notes /*={}*/) =>
-  //let notes = {};
-  await db
-    .allDocs({ include_docs: true })
-    .then(
-      (
-        allNotes //new Promise cannot handle JSON objects, Promise.all() doesn't
-      ) =>
-        Promise.all(
-          allNotes.rows.map(async (n) => await (notes[n.doc.key] = n.doc))
-        )
-      // && and .then() are functionally the same;
-    )
-    .catch(standardCatch);
-
-const optsForPouchDB = {
-  //auto_compaction: true //zipped...
-};
-class RSA {
-  //Key-Box device query Asymmetric-Encryption
-  constructor(name) {
-    PouchDB.plugin(upsert);
-    const title = "rsaPrivateKeys";
-    this.db = new PouchDB(title, optsForPouchDB);
-  }
-  deleteKey = async (keybox) => {
-    await deletion(keybox._id, this.db);
-  };
-
-  //deleteKeys = async () => await destroy(this.db);
-  setPrivateKey = async (key) => await set(this.db, key);
-  readPrivateKeys = async (notes = {}) =>
-    //let notes = {};
-    await read(this.db, notes);
-}
-const castFirestoreBox = async (
-  deviceBox,
-  deviceName,
-  userDatas,
-  devices,
-  authorId,
-  user,
-  rsaPrivateKeys,
-  vintage
-) => {
-  devices
-    .where("authorId", "==", authorId)
-    .get()
-    .then(async (devs) => {
-      if ((devs && devs.docs.length === 0) || !user.key) {
-        rsaPrivateKeys
-          .deleteKey(deviceBox)
-          .then(
-            async () =>
-              await rsaPrivateKeys.setPrivateKey({
-                _id: authorId,
-                box: deviceBox.box,
-                key: deviceBox.key,
-                vintage
-              })
-          )
-          .catch(standardCatch);
-      } else {
-        console.log("casting box");
-        console.log(deviceBox);
-        if (
-          !user.pendingDeviceBoxes[vintage] ||
-          !user.pendingDeviceBoxes[vintage].includes(deviceBox.box)
-        ) {
-          return await userDatas
-            .update({
-              ["pendingDeviceBoxes" +
-              vintage]: firebase.firestore.FieldValue.arrayUnion(deviceBox.box)
-            })
-            .then(
-              async () =>
-                await devices
-                  .add({
-                    authorId,
-                    box: deviceBox.box,
-                    name: deviceName,
-                    vintage
-                  })
-                  .then(() => "awaitingAuthMode")
-                  .catch(standardCatch)
-            )
-            .catch(standardCatch);
-        } else return console.log("box is already pending approval");
-      }
-    });
-};
-
-const getKeys = async (
-  deviceBox,
-  accountBox,
-  user,
-  rsaPrivateKeys,
-  userDatas, //userdata doc
-  devices,
-  deviceName,
-  authorId,
-  vintage
-) => {
-  if (user["deviceBox" + deviceBox.box]) {
-    await rsaPrivateKeys
-      .setPrivateKey({
-        _id: authorId,
-        key: rsa.decrypt(
-          user["deviceBox" + deviceBox.box],
-          deviceBox.key,
-          "SHA-256",
-          {
-            name: "RSA-PSS"
-          }
-        ),
-        box: user.box,
-        vintage
-      })
-      .then(
-        async () =>
-          await userDatas
-            .update({
-              ["pendingDeviceBoxes" +
-              vintage]: firebase.firestore.FieldValue.arrayRemove(
-                accountBox.box
-              ),
-              ["deviceBox" +
-              deviceBox.box]: firebase.firestore.FieldValue.delete()
-            })
-            .then(
-              async () =>
-                await devices
-                  .where("authorId", "==", authorId)
-                  .where("box.n", "==", deviceBox.box.n)
-                  .get()
-                  .then((querySnapshot) => {
-                    let foos = [];
-                    let p = 0;
-                    querySnapshot.docs.forEach((doc) => {
-                      p++;
-                      if (doc.exists) {
-                        var foo = doc.data();
-                        foo.id = doc.id;
-                        foos.push(foo);
-                      }
-                    });
-                    return (
-                      querySnapshot.docs.length === p &&
-                      devices
-                        .doc(foos[foos.length].id)
-                        .update({
-                          authorized: true
-                        })
-                        .catch(standardCatch)
-                    );
-                  })
-                  .catch(standardCatch)
-            )
-            .catch(standardCatch)
-      );
-  } /*else
-    await castFirestoreBox(
-      deviceBox,
-      deviceName,
-      userDatas,
-      devices,
-      authorId,
-      user,
-      rsaPrivateKeys,
-      vintage
-    );*/ //this shouldn't run unless interrupted
-};
-const getDevices = (user, userDatas, accountBox, vintage) =>
-  user.pendingDeviceBoxes[vintage] &&
-  user.pendingDeviceBoxes[vintage].length > 0 &&
-  user.pendingDeviceBoxes[vintage].map(
-    async (deviceBox) =>
-      await userDatas
-        .update({
-          ["pendingDeviceBoxes" +
-          vintage]: firebase.firestore.FieldValue.arrayRemove(accountBox.box),
-          ["deviceBox" + deviceBox]: rsa.encrypt(
-            accountBox.key,
-            deviceBox,
-            "SHA-256",
-            {
-              name: "RSA-PSS"
-            }
-          )
-        })
-        .then(() => {})
-        .catch(standardCatch)
-  );
-
-const saveDevice = async (
-  user,
-  userProps,
-  rsaPrivateKeys,
-  deviceName,
-  userDatas,
-  devices,
-  authorId,
-  device,
-  vintage
-) =>
-  await rsa
-    .generateKey(2048)
-    .then(async (accountBox) => {
-      console.log("fashioned keys");
-      console.log(accountBox);
-      const keybox = {
-        _id: device ? "device" : authorId,
-        key: accountBox.privateKey,
-        box: accountBox.publicKey,
-        vintage
-      };
-      console.log("saving");
-      console.log(keybox);
-      //with device-box, get account-key
-      if (!userProps.box) {
-        console.log("totally new account-box");
-        //& device-box (same for first device)
-        user
-          .update({ box: keybox.box }) //keys are only on device
-          .then(() =>
-            console.log(
-              "Establishing an original keybox for your account... success!  " +
-                "Now you can copy this to access on-device, end-to-end encrypted chats"
-            )
-          )
-          .catch(standardCatch);
-        await devices
-          .add({
-            authorId,
-            box: keybox.box,
-            name: deviceName
-          })
-          .then(() => "awaitingAuthMode")
-          .catch(standardCatch);
-      } else {
-        console.log("adding as an additional device");
-        await castFirestoreBox(
-          keybox,
-          specialFormatting(deviceName),
-          userDatas,
-          devices,
-          authorId,
-          user,
-          rsaPrivateKeys,
-          vintage
-        );
-      }
-      return await rsaPrivateKeys.setPrivateKey(keybox);
-      //randomString(4, "aA#")
-    })
-    .catch(standardCatch);
-
-const fumbler = async (
-  user,
-  userDatas,
-  devices,
-  deviceName,
-  authorId,
-  vintage
-) => {
-  if (!(user && userDatas && devices && deviceName && authorId && vintage)) {
-    console.log(`REACT-FUMBLER: requires ...[
-    userDocRef,
-    userDatasDocRef,
-    devicesCollectionRef,
-    deviceName[String],
-    authorId[auth.uid],
-    vintage[partition for content:default desc[0]]] but got:`);
-    return console.log([
-      user,
-      userDatas,
-      devices,
-      deviceName,
-      authorId,
-      vintage
-    ]);
-  }
-  return await user.get().then(async (bar) => {
-    var userProps = bar.data();
-    userProps.id = bar.id;
-    userDatas.get().then((barr) => {
-      var userDatasProps = barr.data();
-      userDatasProps.id = barr.id;
-      if (
-        !userDatasProps.vintages ||
-        !userDatasProps.vintages.includes(vintage)
-      )
-        userDatas
-          .update({
-            vintages: firebase.firestore.FieldValue.arrayUnion(vintage),
-            defaultVintage: vintage
-          })
-          .catch(standardCatch);
-    });
-    const rsaPrivateKeys = new RSA();
-    await rsaPrivateKeys
-      .readPrivateKeys()
-      .then(async (keysOutput) => {
-        console.log(keysOutput);
-        var keyBoxes = Object.values(keysOutput);
-        if (keyBoxes) {
-          keyBoxes = keyBoxes.map((x) => {
-            if (!x.box || !x.key) {
-              rsaPrivateKeys.deleteKey(x);
-              return null;
-            }
-            return x;
-          });
-          console.log(keyBoxes);
-          const accountBox = keyBoxes.find(
-            (x) => x._id === authorId && vintage === x.vintage
-          );
-          devices
-            .where("authorId", "==", authorId)
-            .where("vintage", "==", vintage)
-            .get()
-            .then(async (devs) => {
-              if (accountBox) {
-                //user keyBox found (locally), and useable. Everytime, salt the
-                //account-key stored on device for all pendingDeviceBoxes
-                //syncPending
-                console.log("found account box");
-                console.log(accountBox);
-                getDevices(userProps, userDatas, accountBox, vintage);
-                //async await require stringify? if already then'd,
-                //it is already object
-
-                //hydrate keys
-                const output = {
-                  accountBox,
-                  fumblingComplete: true,
-                  devices: devs.docs
-                    .map((doc) => {
-                      if (doc.exists) {
-                        var foo = doc.data();
-                        foo.id = doc.id;
-                        if (foo.name !== deviceName) {
-                          foo.name = deviceName;
-                          devices.doc(foo.id).update({ name: deviceName });
-                        }
-                        return foo;
-                      } else return null;
-                    })
-                    .filter((x) => x)
-                };
-                return await new Promise((resolve) =>
-                  resolve(JSON.stringify(output))
-                );
-              } else {
-                const deviceBox = keyBoxes.find(
-                  (x) => x._id === "device" && vintage === x.vintage
-                );
-                if (deviceBox) {
-                  //no user keyBox found (locally), but device-box has been
-                  //provisioned/forged (locally). Next,
-                  console.log("found device box");
-                  console.log(deviceBox);
-                  getKeys(
-                    deviceBox,
-                    accountBox,
-                    userProps,
-                    rsaPrivateKeys,
-                    userDatas,
-                    devices,
-                    deviceName,
-                    authorId,
-                    vintage
-                  );
-                  return null;
-                } else if (userProps.box || devs.docs.length === 0) {
-                  return saveDevice(
-                    user,
-                    userProps,
-                    rsaPrivateKeys,
-                    deviceName,
-                    userDatas,
-                    devices,
-                    authorId,
-                    devs.docs.length > 0,
-                    vintage
-                  );
-                } else
-                  devices
-                    .where("authorId", "==", authorId)
-                    .get()
-                    .then((querySnapshot) => {
-                      querySnapshot.docs.forEach((doc) => {
-                        if (doc.exists) {
-                          devices
-                            .doc(doc.id)
-                            .delete()
-                            .then(() => {})
-                            .catch(standardCatch);
-                        }
-                      });
-                      keyBoxes.forEach((x) => rsaPrivateKeys.deleteKey(x));
-                    });
-              }
-            });
-        } /* else saveDevice(
-          user,
-          userProps,
-          rsaPrivateKeys,
-          deviceName,
-          userDatas,
-          devices,
-          authorId
-        );*/
-      })
-      .catch(standardCatch);
-  });
-};
-const updateMyKeys = async (rsaPrivateKeys, room, user) => {
-  await rsaPrivateKeys
-    .readPrivateKeys()
-    .then(async (keysOutput) => {
-      const keyBoxes = Object.values(keysOutput);
-      var keyBox = keyBoxes.find((x) => x._id === room.id);
-      if (keyBox) {
-        const saltedKeys = room["saltedKeys" + this.props.authorId];
-        saltedKeys &&
-          rsa
-            .decrypt(saltedKeys, user.key, "SHA-256", {
-              name: "RSA-PSS"
-            })
-            .then(async (privateRoomKey) => {
-              if (keyBox.key !== privateRoomKey) {
-                const keyBoxConfirmed = await rsaPrivateKeys.setPrivateKey({
-                  _id: room.id,
-                  key: keyBox.key,
-                  box: room.box,
-                  vintage: keyBox.vintage
-                });
-                keyBoxConfirmed &&
-                  console.log("keyBox established locally for " + room.id);
-              } else
-                console.log(
-                  "there is a keyBox already registered for " + room.id
-                );
-            });
-      } else {
-        //add saltedKey to pouchDB (local-storage)
-      }
-    })
-    .catch((err) => console.log(err.message));
-};
-const roomKeys = async (room, recipientsProfiled, rooms, user) => {
-  const rsaPrivateKeys = new RSA();
-  //same: room, or recipients && entityType + entityId
-  if (room.publicRoomKey) {
-    updateMyKeys(rsaPrivateKeys, room, user);
-  } else {
-    //new: room, or new recipients (or threadId from entity)
-    return await rsa.generateKey(2048).then(async (roomBox) => {
-      if (
-        await rsaPrivateKeys.setPrivateKey({
-          _id: room.id,
-          key: roomBox.key,
-          box: roomBox.box,
-          vintage: roomBox.vintage
-        })
-      ) {
-        return Promise.all(
-          recipientsProfiled.map(
-            (user) =>
-              new Promise((resolve, reject) => {
-                const saltedKey = room["saltedKeys" + user.id];
-
-                if (saltedKey) {
-                  resolve(saltedKey); //String
-                } else {
-                  const saltedKey = rsa.encrypt(
-                    roomBox.key,
-                    user.box,
-                    "SHA-256",
-                    {
-                      name: "RSA-PSS"
-                    }
-                  );
-                  saltedKey && resolve(user.id + saltedKey);
-                }
-              })
-          )
-        ).then((saltedKeys) => {
-          let p = 0;
-          var rm = { ...room };
-          saltedKeys.map((out, p) => {
-            p++;
-            const user = recipientsProfiled.find((x) => out.startsWith(x.id));
-            return (rm["saltedKeys" + user.id] =
-              user && out.substring(user.id.length, out.length));
-          });
-          delete rm.id;
-          rm.box = roomBox.box;
-          if (p === saltedKeys.length) rooms.doc(room.id).update(rm);
-        });
-      }
-    });
-  }
-};
-
-const deleteFumbledKeys = (keybox, devices) => {
-  const rsaPrivateKeys = new RSA();
-
+const deleteFumbledKeys = (keybox, rsaPrivateKeys, deviceCollection) => {
   rsaPrivateKeys
     .readPrivateKeys()
-    .then(async (keysOutput) => {
+    .then((keysOutput) => {
       const keyBoxes = Object.values(keysOutput);
       var keyboxResult = keyBoxes.find((x) => x.box === keybox.box);
       if (keyboxResult)
-        devices
-          .doc(keybox.id)
+        firebase
+          .firestore()
+          .collection(deviceCollection)
+          .doc(keybox._id)
           .delete()
           .then(() =>
             rsaPrivateKeys
               .deleteKey(keyboxResult)
               .then(() => {
-                console.log("deleted plan from local " + keybox.id);
+                console.log("deleted plan from local " + keybox._id);
                 //this.getNotes();
               })
               .catch(standardCatch)
@@ -599,88 +98,85 @@ const deleteFumbledKeys = (keybox, devices) => {
     })
     .catch(standardCatch);
 };
-
-const optsForPouchDB = {
-  revs_limit: 1, //revision-history
-  auto_compaction: true //zipped...
-};
-//const deletion = (d, db) => db.remove(d).catch(standardCatch);
-const destroy = (db) => db.destroy();
-const set = async (db, c) =>
-  await db //has upsert plugin from class constructor
-    .upsert(c._id, (copy) => {
-      copy = { ...c }; //pouch-db \(construct, protocol)\
-      return copy; //return a copy, don't displace immutable object fields
-    })
-    .then(
-      () => null /*"success"*/
-      /** or
-          notes.find((x) => x._id === c._id)
-            ? this.db
-              .post(c)
-              .then(() => null)
-              .catch(standardCatch)
-          : deletion(c) && set(db, c);  
-          */
-    )
-    .catch(standardCatch);
-const read = async (db, notes /*={}*/) =>
-  //let notes = {};
-  await db
-    .allDocs({ include_docs: true })
-    .then(
-      (
-        allNotes //new Promise cannot handle JSON objects, Promise.all() doesn't
-      ) =>
-        Promise.all(
-          allNotes.rows.map(async (n) => await (notes[n.doc.key] = n.doc))
-        )
-      // && and .then() are functionally the same;
-    )
-    .catch(standardCatch);
 class DDB {
   constructor(name) {
     PouchDB.plugin(upsert);
     const title = "deviceName";
-    this.db = new PouchDB(title, optsForPouchDB);
+    this.db = new PouchDB(title, {
+      //revs_limit: 1, //revision-history
+      //auto_compaction: true //zipped...
+    });
   }
-  deleteDeviceName = async (note) =>
-    await this.db.remove(note).catch(standardCatch);
+  deleteDeviceName = async (objectWith_id) =>
+    await this.db
+      .remove(objectWith_id)
+      .then(() => {
+        this.db.destroy().then(() => console.log("destoyed"));
+      })
+      .catch(standardCatch);
 
-  destroy = () => destroy(this.db);
-  storeDeviceName = async (key) => await set(this.db, key);
+  destroy = () => this.db.destroy().then(() => console.log("destoyed"));
+  storeDeviceName = async (c) =>
+    await this.db //has upsert plugin from class constructor
+      .upsert(c._id, (c) => {
+        var copy = { ...c }; //pouch-db \(construct, protocol)\
+        return copy; //return a copy, don't displace immutable object fields
+      });
   readDeviceName = async (notes = {}) =>
     //let notes = {};
-    await read(this.db, notes);
+    {
+      return await this.db
+        .allDocs({ include_docs: true })
+        .then(
+          (allNotes) => {
+            allNotes.rows.map((n) => (notes[n.doc.key] = n.doc));
+            return notes;
+          }
+          // && and .then() are functionally the same;
+        )
+        .catch(standardCatch);
+    };
 }
 class Vintages extends React.Component {
   constructor(props) {
     super(props);
     let ddb = new DDB();
-    this.state = { ddb, keyBoxes: [], devices: [] };
+    let rsaPrivateKeys = new RSA();
+    this.state = {
+      ddb,
+      keyBoxes: [],
+      devices: [],
+      rsaPrivateKeys
+    };
   }
-  devName = () =>
-    this.state.ddb.readDeviceName().then((prenotes) => {
-      const deviceName = Object.values(prenotes)[0];
-      if (deviceName) {
-        this.setState({ deviceName: deviceName._id });
-      }
-    });
-  componentDidMount = () => {
-    this.devName();
-  };
-  getKeys = async (vintage) => {
-    const rsaPrivateKeys = new RSA();
-    rsaPrivateKeys.readPrivateKeys().then(async (keysOutput) => {
-      const keyBoxes = Object.values(keysOutput);
-      if (keyBoxes)
+  actualize = (kbs) =>
+    kbs
+      .map((keybox) => {
+        if (
+          (!keybox.box || !keybox.key) &&
+          keybox.constructor === Object &&
+          Object.keys(keybox).length === 0
+        ) {
+          this.state.rsaPrivateKeys.deleteKey(keybox).catch(standardCatch);
+          return null;
+        } else return keybox;
+      })
+      .filter((x) => x);
+
+  findKeys = async (vintage) => {
+    this.state.rsaPrivateKeys.readPrivateKeys().then(async (keysOutput) => {
+      const kbs = Object.values(keysOutput);
+      if (kbs) {
+        const keyBoxes = this.actualize(kbs);
         this.setState(
-          { keyBoxes },
+          {
+            keyBoxes
+          },
           () =>
             this.props.auth !== undefined &&
             firebase
               .firestore()
-              .collection("devices")
+              .collection(this.props.deviceCollection)
               .where("authorId", "==", this.props.auth.uid)
               .get()
               .then(async (querySnapshot) => {
@@ -703,7 +199,9 @@ class Vintages extends React.Component {
                     if (dev.decommissioned) {
                       var keybox = keyBoxes.find((x) => x.box.n === dev.box.n);
                       if (keybox)
-                        rsaPrivateKeys.deleteKey(keybox).catch(standardCatch);
+                        this.state.rsaPrivateKeys
+                          .deleteKey(keybox)
+                          .catch(standardCatch);
                     } else devices.push(dev);
                   }
                 });
@@ -713,94 +211,561 @@ class Vintages extends React.Component {
                 }
               }, standardCatch)
         );
+      }
     });
   };
-  componentDidUpdate = (prevProps) => {
-    const { vintageOfKeys, user } = this.props;
-    /*if (this.props !== prevProps && this.state !== this.state.lastState) {
-      this.setState({ lastState: this.state }, () => this.devName());
-    }*/
-    if (vintageOfKeys !== this.props.lastVintageName) {
-      this.getKeys(vintageOfKeys);
-    }
-    if (user !== prevProps.user) {
-      if (!vintageOfKeys) {
-        if (user.defaultVintage) {
-          this.props.setParentState({//setParentState={x=>this.setState(x)}
-            vintageOfKeys: user.defaultVintage
-          });
-        } else
-          user.vintages &&
-            this.props.setParentState({
-              vintageOfKeys: user.vintages[0]
-            });
-      }
-    }
-  };
   allowDeviceToRead = async () => {
-    const { auth, vintageOfKeys, user } = this.props;
+    const {
+      auth,
+      user,
+      usersPublicable,
+      usersPrivate,
+      deviceCollection
+    } = this.props;
+    const { vintageOfKeys, deviceName } = this.state;
     if (auth !== undefined) {
-      const userDatas = firebase
-        .firestore()
-        .collection("userDatas")
-        .doc(auth.uid);
-      const userUpdatable = firebase
-        .firestore()
-        .collection("users")
-        .doc(auth.uid);
-      const devices = firebase.firestore().collection("devices");
       console.log("FUMBLER");
 
-      if (!this.state.deviceName)
-        return window.alert(`please choose a device name`);
+      if (!deviceName) return window.alert(`please choose a device name`);
       if (!vintageOfKeys) return window.alert(`please choose a vintage name`);
-      const authorId = auth.uid;
-      await fumbler(
-        userUpdatable,
-        userDatas,
-        devices,
-        this.state.deviceName,
-        authorId,
+      //https://stackoverflow.com/questions/52675190/firebase-cloud-firestore-initializing-a-collection
+      return await this.fumbler(
+        usersPublicable,
+        usersPrivate,
+        deviceName,
+        auth.uid, //authorId:
+        vintageOfKeys,
+        deviceCollection
+      );
+    } else return window.alert("login you must");
+  };
+  componentDidUpdate = (prevProps) => {
+    const { vintageOfKeys, ddb } = this.state;
+    const { user } = this.props;
+    if (user !== undefined && user !== prevProps.user) {
+      ddb
+        .readDeviceName()
+        .then((prenotes) => {
+          const deviceName = Object.values(prenotes)[0];
+          if (deviceName) {
+            this.setState({ deviceName: deviceName._id }, () => {
+              if (!vintageOfKeys) {
+                if (user.defaultVintage) {
+                  this.setState({
+                    //setParentState={x=>this.setState(x)}
+                    vintageOfKeys: user.defaultVintage
+                  });
+                } else
+                  user.vintages &&
+                    this.setState({
+                      vintageOfKeys: user.vintages[0]
+                    });
+              }
+            });
+          }
+        })
+        .catch((err) => console.log(err));
+    }
+    if (vintageOfKeys !== this.state.lastVintageName) {
+      this.setState({ lastVintageName: vintageOfKeys }, () =>
+        this.findKeys(vintageOfKeys)
+      );
+    }
+  };
+
+  fumbler = async (
+    usersPublicable,
+    usersPrivate,
+    deviceName,
+    authorId,
+    vintageOfKeys,
+    deviceCollection
+  ) => {
+    const { rsaPrivateKeys } = this.state;
+    //hoisting promises makes cleaner code? make then with namespace?
+    //then promises require hoisting, not new Promise constructor alone. .then is this hoisted nearly
+    if (
+      !(
+        usersPublicable &&
+        usersPrivate &&
+        deviceName &&
+        authorId &&
         vintageOfKeys
       )
-        .then((o) => {
-          this.getKeys(vintageOfKeys);
-          const obj = o && JSON.parse(o);
-          if (obj) {
-            if (obj.fumblingComplete) {
-              this.props.setKey({
-                key: obj.accountBox.key,
-                box: obj.accountBox.box,
-                devices: obj.devices
-              });
+    ) {
+      console.log(`REACT-FUMBLER: requires ...[
+      userDocRef,
+      userDatasDocRef,
+      devicesCollectionRef,
+      deviceName[String],
+      authorId[auth.uid],
+      vintageOfKeys[partition for content:default desc[0]]] but got:`);
+      return console.log([
+        usersPublicable,
+        usersPrivate,
+        deviceName,
+        authorId,
+        vintageOfKeys
+      ]);
+    }
+    /*var o = null;
+    o = */
+    const userspublicable = firebase.firestore().collection(usersPublicable);
+    const usersprivate = firebase.firestore().collection(usersPrivate);
+    return await userspublicable //shared
+      .doc(this.props.auth.uid)
+      .get()
+      .then(async (bar) => {
+        var userProps = bar.data();
+        userProps.id = bar.id;
+        //console.log("user Object found for Fumbler to use: ", userProps);
+        const userprivate = firebase
+          .firestore()
+          .collection(usersPrivate) //private
+          .doc(this.props.auth.uid);
+        userprivate
+          .get()
+          .then((barr) => {
+            var userDatasProps = barr.data();
+            userDatasProps.id = barr.id;
+            if (
+              !userDatasProps.vintages ||
+              !userDatasProps.vintages.includes(vintageOfKeys)
+            )
+              usersprivate //private
+                .doc(userDatasProps.id)
+                .update({
+                  vintages: firebase.firestore.FieldValue.arrayUnion(
+                    vintageOfKeys
+                  ),
+                  defaultVintage: vintageOfKeys
+                })
+                .then(() => console.log("added vintage: " + vintageOfKeys))
+                .catch(standardCatch);
+          })
+          .catch(standardCatch);
+        return await rsaPrivateKeys
+          .readPrivateKeys()
+          .then(async (keysOutput) => {
+            console.log("keysOutput: ", keysOutput);
+            var keyBoxes = Object.values(keysOutput);
+            if (keyBoxes) {
+              keyBoxes = this.actualize(keyBoxes);
+              const devicecollection = firebase
+                .firestore()
+                .collection(deviceCollection);
+              console.log("keyBoxes: ", keyBoxes);
+              const accountBox = keyBoxes.find(
+                (x) => x._id === authorId && vintageOfKeys === x.vintage
+              );
+              return await devicecollection
+                .where("authorId", "==", authorId)
+                .where("vintage", "==", vintageOfKeys)
+                .get()
+                .then(async (devs) => {
+                  if (accountBox) {
+                    //user keyBox found (locally), and useable. Everytime, salt the
+                    //account-key stored on device for all pendingDeviceBoxes
+                    //syncPending
+                    console.log("found account box: ", accountBox);
+                    //getDevices = (user, usersPrivate, accountBox, vintage) =>
+                    userProps.pendingDeviceBoxes[vintageOfKeys] &&
+                      userProps.pendingDeviceBoxes[vintageOfKeys].length > 0 &&
+                      userProps.pendingDeviceBoxes[vintageOfKeys].map(
+                        (deviceBox) =>
+                          userprivate
+                            .update({
+                              ["pendingDeviceBoxes" +
+                              vintageOfKeys]: firebase.firestore.FieldValue.arrayRemove(
+                                accountBox.box
+                              ),
+                              ["deviceBox" + deviceBox]: rsa.encrypt(
+                                accountBox.key,
+                                deviceBox,
+                                "SHA-256",
+                                {
+                                  name: "RSA-PSS"
+                                }
+                              )
+                            })
+                            .then(() =>
+                              console.log(
+                                "updated userDatas device-boxes (to send keys thru)"
+                              )
+                            )
+                            .catch(standardCatch)
+                      );
+                    return await new Promise((resolve) => {
+                      //async await require stringify? if already then'd,
+                      //it is already object
+
+                      //hydrate keys
+                      const output = {
+                        userProps,
+                        accountBox,
+                        fumblingComplete: true,
+                        devices: devs.docs
+                          .map((doc) => {
+                            if (doc.exists) {
+                              var foo = doc.data();
+                              foo.id = doc.id;
+                              if (foo.name !== deviceName) {
+                                foo.name = deviceName;
+                                devicecollection
+                                  .doc(foo.id)
+                                  .update({ name: deviceName })
+                                  .then(() =>
+                                    console.log("updated device name")
+                                  )
+                                  .catch(standardCatch);
+                              }
+                              return foo;
+                            } else return null;
+                          })
+                          .filter((x) => x)
+                      };
+                      resolve(JSON.stringify(output));
+                    });
+                  } else {
+                    const deviceBox = keyBoxes.find(
+                      (x) => x._id === "device" && vintageOfKeys === x.vintage
+                    );
+                    if (deviceBox) {
+                      //no user keyBox found (locally), but device-box has been
+                      //provisioned/forged (locally). Next,
+                      console.log("found device box: ", deviceBox);
+                      //getKeys = async (
+                      if (userProps["deviceBox" + deviceBox.box]) {
+                        await rsaPrivateKeys
+                          .setPrivateKey({
+                            _id: authorId,
+                            key: rsa.decrypt(
+                              userProps["deviceBox" + deviceBox.box],
+                              deviceBox.key,
+                              "SHA-256",
+                              {
+                                name: "RSA-PSS"
+                              }
+                            ),
+                            box: userProps.box,
+                            vintageOfKeys
+                          })
+                          .then(
+                            async () =>
+                              await userprivate
+                                .update({
+                                  ["pendingDeviceBoxes" +
+                                  vintageOfKeys]: firebase.firestore.FieldValue.arrayRemove(
+                                    accountBox.box
+                                  ),
+                                  ["deviceBox" +
+                                  deviceBox.box]: firebase.firestore.FieldValue.delete()
+                                })
+                                .then(
+                                  async () =>
+                                    await devicecollection
+                                      .where("authorId", "==", authorId)
+                                      .where("box.n", "==", deviceBox.box.n)
+                                      .get()
+                                      .then((querySnapshot) => {
+                                        querySnapshot.docs.forEach((doc) => {
+                                          if (doc.exists) {
+                                            var foo = doc.data();
+                                            foo.id = doc.id;
+                                            devicecollection
+                                              .doc(foo.id)
+                                              .update({
+                                                authorized: true
+                                              })
+                                              .catch(standardCatch);
+                                          }
+                                        });
+                                      })
+                                      .catch(standardCatch)
+                                )
+                                .catch(standardCatch)
+                          )
+                          .catch(standardCatch);
+                      } /*else
+                          await castFirestoreBox(
+                            deviceBox,
+                            deviceName,
+                            usersPrivate,
+                            devices,
+                            authorId,
+                            userProps,
+                            rsaPrivateKeys,
+                            vintage
+                          );*/ //this shouldn't run unless interrupted
+
+                      return null;
+                    } else if (userProps.box || devs.docs.length === 0) {
+                      //saveDevice = async (
+                      return await rsa
+                        .generateKey(2048)
+                        .then(async (accountBox) => {
+                          console.log("fashioned keys");
+                          console.log(accountBox);
+                          const keybox = {
+                            _id: devs.docs.length > 0 ? "device" : authorId,
+                            key: accountBox.privateKey,
+                            box: accountBox.publicKey,
+                            vintageOfKeys
+                          };
+                          console.log("saving keybox: ", keybox);
+                          //with device-box, get account-key
+                          if (!userProps.box) {
+                            console.log("totally new account-box");
+                            //& device-box (same for first device)
+                            userspublicable
+                              .doc(userProps.id)
+                              .update({ box: keybox.box }) //keys are only on device
+                              .then(() =>
+                                console.log(
+                                  "Establishing an original keybox for your account... success!  " +
+                                    "Now you can copy this to access on-device, end-to-end encrypted chats"
+                                )
+                              )
+                              .catch(standardCatch);
+                            await devicecollection
+                              .add({
+                                authorId,
+                                box: keybox.box,
+                                name: deviceName
+                              })
+                              .then(() => "awaitingAuthMode")
+                              .catch(standardCatch);
+                          } else {
+                            console.log("adding as an additional device");
+                            //castFirestoreBox = async (
+                            devicecollection
+                              .where("authorId", "==", authorId)
+                              .get()
+                              .then(async (devs) => {
+                                if (
+                                  (devs && devs.docs.length === 0) ||
+                                  !userProps.key
+                                ) {
+                                  rsaPrivateKeys
+                                    .deleteKey(keybox)
+                                    .then(
+                                      async () =>
+                                        await rsaPrivateKeys.setPrivateKey({
+                                          _id: authorId,
+                                          box: keybox.box,
+                                          key: keybox.key,
+                                          vintageOfKeys
+                                        })
+                                    )
+                                    .catch(standardCatch);
+                                } else {
+                                  console.log("casting box: ", keybox);
+                                  if (
+                                    !userProps.pendingDeviceBoxes[
+                                      vintageOfKeys
+                                    ] ||
+                                    !userProps.pendingDeviceBoxes[
+                                      vintageOfKeys
+                                    ].includes(keybox.box)
+                                  ) {
+                                    return await userprivate
+                                      .update({
+                                        ["pendingDeviceBoxes" +
+                                        vintageOfKeys]: firebase.firestore.FieldValue.arrayUnion(
+                                          keybox.box
+                                        )
+                                      })
+                                      .then(
+                                        async () =>
+                                          await devicecollection
+                                            .add({
+                                              authorId,
+                                              box: keybox.box,
+                                              name: specialFormatting(
+                                                deviceName
+                                              ),
+                                              vintageOfKeys
+                                            })
+                                            .then(() => "awaitingAuthMode")
+                                            .catch(standardCatch)
+                                      )
+                                      .catch(standardCatch);
+                                  } else
+                                    return console.log(
+                                      "box is already pending approval"
+                                    );
+                                }
+                              });
+                          }
+                          return await rsaPrivateKeys.setPrivateKey(keybox);
+                          //randomString(4, "aA#")
+                        })
+                        .catch(standardCatch);
+                    } else {
+                      devicecollection
+                        .where("authorId", "==", authorId)
+                        .get()
+                        .then((querySnapshot) => {
+                          querySnapshot.docs.forEach((doc) => {
+                            if (doc.exists) {
+                              devicecollection
+                                .doc(doc.id)
+                                .delete()
+                                .then(() => {})
+                                .catch(standardCatch);
+                            }
+                          });
+                          keyBoxes.forEach((x) => rsaPrivateKeys.deleteKey(x));
+                        });
+                      return null;
+                    }
+                  }
+                });
+            } else
+              return null; /* else saveDevice(
+            user,
+            userProps,
+            rsaPrivateKeys,
+            deviceName,
+            usersPrivate,
+            devices,
+            authorId
+          );*/
+          })
+          .catch(standardCatch);
+      })
+      .then((obj) => {
+        this.findKeys(vintageOfKeys);
+        var msg = null;
+        if (obj) {
+          if (obj.fumblingComplete) {
+            this.props.setKey({
+              key: obj.accountBox.key,
+              box: obj.accountBox.box,
+              devices: obj.devices
+            });
+          }
+          msg = "";
+        } else if (obj === "awaitingAuthMode")
+          this.setState(
+            {
+              standbyMode: true
+            },
+            () => {
+              window.alert(
+                "STANDBY: Please login to " +
+                  (obj.userProps.authorizedDevices.length > 1
+                    ? "another one of "
+                    : "") +
+                  `your previous (${
+                    obj.userProps.authorizedDevices.length
+                  }) device${
+                    obj.userProps.authorizedDevices.length > 1 ? "s" : ""
+                  }, then come back.`
+              );
+              msg = "set reminder";
             }
-          } else if (obj === "awaitingAuthMode")
-            this.setState(
-              {
-                standbyMode: true
-              },
-              () =>
-                window.alert(
-                  "STANDBY: Please login to " +
-                    (user.authorizedDevices.length > 1
-                      ? "another one of "
-                      : "") +
-                    `your previous (${user.authorizedDevices.length}) device${
-                      user.authorizedDevices.length > 1 ? "s" : ""
-                    }, then come back.`
-                )
-            );
+          );
+        return msg;
+      });
+  };
+  getRoomKeys = async (
+    room,
+    recipientsProfiled,
+    rooms,
+    user,
+    rsaPrivateKeys
+  ) => {
+    if (!room || !room.id) return console.log("no room: " + room);
+    //same: room, or recipients && entityType + entityId
+    if (room.publicRoomKey) {
+      //updateMyKeys = async (room, user, rsaPrivateKeys) => {
+      return await rsaPrivateKeys
+        .readPrivateKeys()
+        .then(async (keysOutput) => {
+          const keyBoxes = Object.values(keysOutput);
+          var msg = null;
+          var keyBox = keyBoxes.find((x) => x._id === room.id);
+          if (keyBox) {
+            const saltedKeys = room["saltedKeys" + this.props.authorId];
+            saltedKeys &&
+              rsa
+                .decrypt(saltedKeys, user.key, "SHA-256", {
+                  name: "RSA-PSS"
+                })
+                .then(async (privateRoomKey) => {
+                  if (keyBox.key !== privateRoomKey) {
+                    const keyBoxConfirmed = await rsaPrivateKeys.setPrivateKey({
+                      _id: room.id,
+                      key: keyBox.key,
+                      box: room.box,
+                      vintage: keyBox.vintage
+                    });
+                    msg =
+                      keyBoxConfirmed &&
+                      "keyBox established locally for " + room.id;
+                  } else
+                    msg = "there is a keyBox already registered for " + room.id;
+                });
+          } else {
+            //add saltedKey to pouchDB (local-storage)
+          }
+          return msg && console.log(msg);
         })
-        .catch(standardCatch);
-    } else window.alert("login you must");
+        .catch((err) => console.log(err.message));
+    } else {
+      //new: room, or new recipients (or threadId from entity)
+      return await rsa.generateKey(2048).then(async (roomBox) => {
+        if (
+          await rsaPrivateKeys.setPrivateKey({
+            _id: room.id,
+            key: roomBox.key,
+            box: roomBox.box,
+            vintage: roomBox.vintage
+          })
+        ) {
+          return Promise.all(
+            recipientsProfiled.map(
+              (user) =>
+                new Promise((resolve, reject) => {
+                  const saltedKey = room["saltedKeys" + user.id];
+
+                  if (saltedKey) {
+                    resolve(saltedKey); //String
+                  } else {
+                    const saltedKey = rsa.encrypt(
+                      roomBox.key,
+                      user.box,
+                      "SHA-256",
+                      {
+                        name: "RSA-PSS"
+                      }
+                    );
+                    saltedKey && resolve(user.id + saltedKey);
+                  }
+                })
+            )
+          ).then((saltedKeys) => {
+            let p = 0;
+            var rm = { ...room };
+            saltedKeys.map((out, p) => {
+              p++;
+              const user = recipientsProfiled.find((x) => out.startsWith(x.id));
+              return (rm["saltedKeys" + user.id] =
+                user && out.substring(user.id.length, out.length));
+            });
+            delete rm.id;
+            rm.box = roomBox.box;
+            if (p === saltedKeys.length) rooms.doc(room.id).update(rm);
+          });
+        }
+      });
+    }
   };
-  manuallyDeleteKeyBox = async (keybox) => {
-    const devices = firebase.firestore().collection("devices");
-    deleteFumbledKeys(keybox, devices);
-  };
+
   render() {
-    const { vintageOfKeys, user } = this.props;
-    const { keyBoxes, devices } = this.state;
+    const { user } = this.props;
+    const { vintageOfKeys, keyBoxes, devices, deviceName } = this.state;
     const keyboxContStyle = {
       borderBottom: "2px solid grey",
       backgroundColor: "rgb(40,40,90)",
@@ -813,6 +778,7 @@ class Vintages extends React.Component {
     };
     return (
       <div
+        ref={this.props.Vintages}
         style={{
           display: this.props.show ? "block" : "none",
           color: "white",
@@ -841,14 +807,14 @@ class Vintages extends React.Component {
         </div>
         <br />
         current: {"{"}
-        {this.state.deviceName ? (
+        {deviceName ? (
           <div
             onClick={() => {
               const answer = window.confirm("edit name?");
               if (answer) this.setState({ deviceName: null });
             }}
           >
-            device: {this.state.deviceName}
+            device: {deviceName}
           </div>
         ) : (
           <form
@@ -881,7 +847,7 @@ class Vintages extends React.Component {
                   !user.vintages ||
                   !user.vintages.includes(this.state.vintageYearSetter)
                 ) {
-                  this.props.setParentState({
+                  this.setState({
                     vintageOfKeys: this.state.vintageYearSetter
                   });
                 } else this.setState({ errVintage: "already" });
@@ -900,7 +866,7 @@ class Vintages extends React.Component {
               {user !== undefined && user.vintages && user.vintages.length > 0 && (
                 <button
                   onClick={() =>
-                    this.props.setParentState({
+                    this.setState({
                       vintageOfKeys: user.vintages[0]
                     })
                   }
@@ -914,7 +880,7 @@ class Vintages extends React.Component {
               <div
                 onClick={() => {
                   const answer = window.confirm("add vintage?");
-                  if (answer) this.props.setParentState({ vintageOfKeys: null });
+                  if (answer) this.setState({ vintageOfKeys: null });
                 }}
               >
                 vintage: {vintageOfKeys}
@@ -922,12 +888,12 @@ class Vintages extends React.Component {
               {user.vintages && (
                 <select
                   onChange={(e) =>
-                    this.props.setParentState({ vintageOfKeys: e.target.value })
+                    this.setState({ vintageOfKeys: e.target.value })
                   }
                 >
-                  {user.vintages.map((x) => {
-                    return <option key={x}>{x}</option>;
-                  })}
+                  {user.vintages.map((x) => (
+                    <option key={"vintage" + x}>{x}</option>
+                  ))}
                 </select>
               )}
             </div>
@@ -937,9 +903,9 @@ class Vintages extends React.Component {
         <br />
         {
           //load
-          !this.state.deviceName && vintageOfKeys ? (
+          !deviceName && vintageOfKeys ? (
             "loading"
-          ) : !this.state.deviceName ? (
+          ) : !deviceName ? (
             "name your first device"
           ) : user === undefined || !vintageOfKeys ? (
             ""
@@ -965,11 +931,12 @@ class Vintages extends React.Component {
             {user === undefined
               ? "your list of keyboxes once you login goes here."
               : keyBoxes.map((x) => {
-                  const thisdevice = devices.find((p) => p.id === x.id);
+                  const thisdevice = devices.find((p) => p.id === x._id);
                   //if (!thisdevice) {
+                  //console.log(x);
                   return (
                     <div
-                      key={x._id}
+                      key={"keyboxpouched" + x._id}
                       style={{
                         alignItems: "center",
                         padding: "4px 10px",
@@ -1001,37 +968,14 @@ class Vintages extends React.Component {
             {user === undefined
               ? "your list of active devices once you login goes here."
               : devices.map((x, i) => {
-                  const thisdevice = keyBoxes.find((p) => p.id === x.id);
-                  if (!thisdevice) {
-                    return (
-                      <div
-                        key={"device" + i}
-                        style={{
-                          alignItems: "center",
-                          padding: "4px 10px",
-                          display: "flex",
-                          borderRadius: "12px",
-                          width: "max-content",
-                          backgroundColor: x.authorized
-                            ? "white"
-                            : x.decommissioned
-                            ? "red"
-                            : "yellow"
-                        }}
-                      >
-                        {x.name}
-                        {x.thisdevice && " (this)"}
-                        &nbsp;/&nbsp;
-                        {x._id}({x.vintage})
-                      </div>
-                    );
-                  } else {
+                  const thisdevice = keyBoxes.find((p) => p._id === x.id);
+                  if (thisdevice) {
                     const thispendbox = user.pendingDeviceBoxes.find(
                       (p) => p.n === x.box.n
                     );
                     return (
                       <div
-                        key={"device" + i}
+                        key={"device" + x.id}
                         style={{
                           alignItems: "center",
                           padding: "4px 10px",
@@ -1068,10 +1012,11 @@ class Vintages extends React.Component {
                                     `they will have to request the account key again.`
                                 );
                                 if (answer) {
-                                  firebase
+                                  const device = firebase
                                     .firestore()
-                                    .collection("devices")
-                                    .doc(thisdevice.id)
+                                    .collection(this.props.deviceCollection)
+                                    .doc(thisdevice.id);
+                                  device
                                     .update({ decommissioned: true })
                                     .then(() => {})
                                     .catch(standardCatch);
@@ -1118,10 +1063,11 @@ class Vintages extends React.Component {
                                 }authorize device: ` + thisdevice.name
                               );
                               if (answer) {
-                                firebase
+                                const device = firebase
                                   .firestore()
-                                  .collection("devices")
-                                  .doc(thisdevice.id)
+                                  .collection(this.props.deviceCollection)
+                                  .doc(thisdevice.id);
+                                device
                                   .update({
                                     decommissioned: false,
                                     authorized: true
@@ -1151,7 +1097,29 @@ class Vintages extends React.Component {
                         {thispendbox && <div className="loader" />}({x.vintage})
                       </div>
                     );
-                  }
+                  } else
+                    return (
+                      <div
+                        key={"device_decommissioned" + x.id}
+                        style={{
+                          alignItems: "center",
+                          padding: "4px 10px",
+                          display: "flex",
+                          borderRadius: "12px",
+                          width: "max-content",
+                          backgroundColor: x.authorized
+                            ? "white"
+                            : x.decommissioned
+                            ? "red"
+                            : "yellow"
+                        }}
+                      >
+                        {x.name}
+                        {x.thisdevice && " (this)"}
+                        &nbsp;/&nbsp;
+                        {x._id}({x.vintage})
+                      </div>
+                    );
                 })}
           </div>
         )}
@@ -1160,4 +1128,6 @@ class Vintages extends React.Component {
   }
 }
 
-export { fumbler, roomKeys, deleteFumbledKeys, RSA,Vintages };
+export default React.forwardRef((props, ref) => (
+  <Vintages Vintages={ref} {...props} />
+));
