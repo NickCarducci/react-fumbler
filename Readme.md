@@ -13,31 +13,49 @@ No redistribution but for strategy of parts, unless retributed
 
 how to use
 
-    <div
-      style={{
-        textIndent: "10px",
-        padding: "10px 0px",
-        color: "white",
-        backgroundColor: "rgb(20,20,50)",
-        width: "calc(100%)",
-        //border: "2px solid",
-        breakInside: "avoid"
-      }}
-    >
-      {this.props.auth === undefined ? (
-        "Login to forge vintages"
-      ) : (
-        <Vintages
-          Vintages={this.props.Vintages}
-          show={true}
-          auth={this.props.auth}
-          user={this.props.user}
-          deviceCollection={"devices"}
-          usersPublicable={"users"}
-          usersPrivate={"userDatas"}
-        />
-      )}
-    </div>
+    export default class App React.Component extends {
+      constructor(props){
+        super(props)
+        this.Vintages = React.createRef()
+      }
+      render() {
+       return <div><div
+          style={{
+            textIndent: "10px",
+            padding: "10px 0px",
+            color: "white",
+            backgroundColor: "rgb(20,20,50)",
+            width: "calc(100%)",
+            //border: "2px solid",
+            breakInside: "avoid"
+          }}
+        >
+          {this.props.auth === undefined ? (
+            "Login to forge vintages"
+          ) : (
+            <Vintages
+              Vintages={this.Vintages}
+              show={true}
+              auth={this.props.auth}
+              user={this.props.user}
+              deviceCollection={"devices"}
+              usersPublicable={"users"}
+              usersPrivate={"userDatas"}
+            />
+          )}
+        </div>
+        <div onClick={()=>this.props.getRoomKeys(
+                              room,
+                              rsaPrivateKeys,
+                              threadId,
+                              recipientsProfiled,
+                              "rooms", //roomsCollection,
+                              user
+                            )
+        }>getRoomKeys</div>
+        </div>
+      }
+   }
 
 how to use, Chats: create a public and private user data collection [users,userDatas] or whatever
 
