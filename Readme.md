@@ -44,7 +44,7 @@ how to use
             />
           )}
         </div>
-        <div onClick={()=>this.props.getRoomKeys(
+        <div onClick={()=>this.Vintages.getRoomKeys(
                               room,
                               rsaPrivateKeys,
                               threadId,
