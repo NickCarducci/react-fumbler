@@ -39,9 +39,12 @@
         "url": "https://github.com/nickcarducci/react-fumbler"
     },
     "peerDependencies": {
-        "firebase": ">=8.7.0",
+        "@babel/runtime": "^7.12.0",
+        "firebase": "8.7.0",
+        "js-crypto-rsa": "^1.0.0",
         "pouchdb": "^7.2.2",
         "pouchdb-upsert": ">=2.2.0",
-        "react": ">=16.8.0"
+        "react": ">=16.8.0",
+        "react-dom": ">=16.8.0"
     }
 }
