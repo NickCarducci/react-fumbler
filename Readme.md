@@ -1,6 +1,6 @@
 Just put what is in path(__dirname, src, index.js) in for now, as I figure out
 babel config (edit: `npm publish`ed without any scripts, just `main:"src/index.js"`)
-🚨alpha- As used in: wavv.art github.com/nickcarducci/Wavepoint.la ⚛️
+🚨alpha- As used in: wavv.art github.com/nickcarducci/Wavepoint.la ⚛️ thumbprint.us
 # Fumbler, your RSA encryption suite for firebase-firestore (in React)!
 
 The reliability of this relies on cors so that no private key-modulo, off-local-storage is required.
