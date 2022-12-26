@@ -1,6 +1,6 @@
 {
     "name": "react-fumbler",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "react-keybox-firestore, sorting logic for pouchdb local storage key storage for on-device, end-to-end-encryption",
     "main": "src/index.js",
     "keywords": [
@@ -25,57 +25,12 @@
     },
     "files": [
         "src",
-        "index..js"
+        "index.js"
     ],
     "sideEffects": false,
     "license": "UNLICENSED",
-    "author": "Nick Carducci nick@carducci.sh",
+    "author": "Nick Carducci nmcarducci@gmail.com",
     "bugs": {
         "url": "https://github.com/nickcarducci/react-fumbler"
-    },
-    "scripts": {
-        "build": "webpack"
-    },
-    "dependencies": {
-        "@babel/runtime": "^7.12.0",
-        "js-crypto-rsa": "^1.0.0",
-        "pouchdb": ">=7.1.1",
-        "pouchdb-upsert": ">=2.2.0",
-        "react": ">=16.8.0",
-        "react-dom": ">=16.8.0"
-    },
-    "devDependencies": {
-        "@babel/preset-env": "^7.14.8",
-        "@babel/preset-react": "^7.14.5",
-        "babel-core": "^6.21.0",
-        "babel-loader": "^8.2.2",
-        "core-js": "^3.6.5",
-        "path": "^0.12.7",
-        "regenerator-runtime": "^0.13.7",
-        "webpack": "^5.42.0"
-    },
-    "peerDependencies": {
-        "pouchdb": ">=7.1.1",
-        "pouchdb-upsert": ">=2.2.0",
-        "react": ">=16.8.0",
-        "react-dom": ">=16.8.0"
-    },
-    "resolutions": {
-        "react": "^17.0.0",
-        "react-dom": "^17.0.0"
-    },
-    "preconstruct": {
-        "entrypoints": [
-            "."
-        ]
-    },
-    "babel": {
-        "presets": [
-            "@babel/preset-env",
-            "@babel/preset-react"
-        ],
-        "plugins": [
-            "@babel/plugin-proposal-class-properties"
-        ]
     }
 }
